@@ -386,6 +386,37 @@ Custom Anthropic-compatible providers follow this format:
 }
 ```
 
+#### Custom Endpoint URLs
+
+For OpenAI-compatible providers, you can specify a complete API endpoint URL by adding a `#` at the end of the `base_url`. This is useful when working with API gateways, proxies, or services that use non-standard endpoint paths.
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "providers": {
+    "custom-endpoint": {
+      "type": "openai",
+      "base_url": "https://my.custom.domain/custom/openai/gpt#",
+      "api_key": "$CUSTOM_API_KEY",
+      "models": [
+        {
+          "id": "gpt-4",
+          "name": "Custom GPT-4",
+          "context_window": 128000,
+          "default_max_tokens": 4096
+        }
+      ]
+    }
+  }
+}
+```
+
+**Important Notes:**
+- The `#` marker tells Crush to use the URL as the complete chat completions endpoint
+- Other API calls (like `/models` for connection testing) will be disabled
+- This feature currently only works with OpenAI-compatible providers
+- Remove the `#` marker to return to standard behavior
+
 ### Amazon Bedrock
 
 Crush currently supports running Anthropic models through Bedrock, with caching disabled.

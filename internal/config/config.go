@@ -460,6 +460,12 @@ func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
 		if baseURL == "" {
 			baseURL = "https://api.openai.com/v1"
 		}
+		// Check if this is a custom endpoint (marked with #)
+		if strings.HasSuffix(baseURL, "#") {
+			// For custom endpoints, we cannot test /models endpoint
+			// Skip connection test as per requirement #4
+			return nil
+		}
 		testURL = baseURL + "/models"
 		headers["Authorization"] = "Bearer " + apiKey
 	case catwalk.TypeAnthropic:

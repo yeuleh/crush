@@ -44,7 +44,15 @@ func createOpenAIClient(opts providerClientOptions) openai.Client {
 	if opts.baseURL != "" {
 		resolvedBaseURL, err := config.Get().Resolve(opts.baseURL)
 		if err == nil && resolvedBaseURL != "" {
-			openaiClientOptions = append(openaiClientOptions, option.WithBaseURL(resolvedBaseURL))
+			// Check if this is a custom endpoint (marked with #)
+			if IsCustomEndpointURL(resolvedBaseURL) {
+				// For custom endpoints, use placeholder base URL and add middleware
+				openaiClientOptions = append(openaiClientOptions, option.WithBaseURL(GetEffectiveBaseURLForOpenAI(resolvedBaseURL)))
+				openaiClientOptions = append(openaiClientOptions, option.WithMiddleware(CreateCustomEndpointMiddleware(resolvedBaseURL)))
+			} else {
+				// Standard behavior for regular base URLs
+				openaiClientOptions = append(openaiClientOptions, option.WithBaseURL(resolvedBaseURL))
+			}
 		}
 	}
 
