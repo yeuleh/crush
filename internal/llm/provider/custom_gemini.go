@@ -44,6 +44,13 @@ func newCustomGeminiClient(opts providerClientOptions) CustomGeminiClient {
 		baseURL = "https://generativelanguage.googleapis.com"
 	}
 
+	// Log configuration for debugging (without sensitive information)
+	slog.Debug("Creating custom Gemini client", 
+		"base_url", baseURL,
+		"has_api_key", opts.apiKey != "",
+		"model_type", opts.modelType,
+	)
+
 	return &customGeminiClient{
 		providerOptions:    opts,
 		httpClient:         createHTTPClient(opts),
