@@ -3,7 +3,12 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/config"
@@ -239,6 +244,7 @@ type mockTool struct {
 	name        string
 	description string
 	parameters  map[string]interface{}
+	required    []string
 }
 
 func (m *mockTool) Info() tools.ToolInfo {
@@ -246,6 +252,7 @@ func (m *mockTool) Info() tools.ToolInfo {
 		Name:        m.name,
 		Description: m.description,
 		Parameters:  m.parameters,
+		Required:    m.required,
 	}
 }
 
@@ -649,6 +656,194 @@ func TestConvertToolsToGemini(t *testing.T) {
 		assert.True(t, ok)
 		assert.Empty(t, properties)
 	})
+
+	t.Run("Convert tool with required fields", func(t *testing.T) {
+		mockTools := []tools.BaseTool{
+			&mockTool{
+				name:        "required_tool",
+				description: "A tool with required fields",
+				parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"message": map[string]interface{}{
+							"type":        "string",
+							"description": "The message to process",
+						},
+						"optional_param": map[string]interface{}{
+							"type":        "number",
+							"description": "An optional parameter",
+						},
+					},
+				},
+				required: []string{"message"},
+			},
+		}
+
+		geminiTools, err := client.convertToolsToGemini(mockTools)
+		require.NoError(t, err)
+		assert.Len(t, geminiTools, 1)
+		assert.Len(t, geminiTools[0].FunctionDeclarations, 1)
+		
+		funcDecl := geminiTools[0].FunctionDeclarations[0]
+		assert.Equal(t, "required_tool", funcDecl.Name)
+		
+		// Check that required fields are properly converted
+		required, ok := funcDecl.Parameters["required"].([]string)
+		assert.True(t, ok)
+		assert.Equal(t, []string{"message"}, required)
+	})
+
+	t.Run("Convert tool with nested objects", func(t *testing.T) {
+		mockTools := []tools.BaseTool{
+			&mockTool{
+				name:        "nested_tool",
+				description: "A tool with nested objects",
+				parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"config": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"timeout": map[string]interface{}{
+									"type":        "number",
+									"description": "Timeout in seconds",
+								},
+								"retries": map[string]interface{}{
+									"type":        "integer",
+									"description": "Number of retries",
+								},
+							},
+							"required": []string{"timeout"},
+						},
+					},
+				},
+				required: []string{"config"},
+			},
+		}
+
+		geminiTools, err := client.convertToolsToGemini(mockTools)
+		require.NoError(t, err)
+		assert.Len(t, geminiTools, 1)
+		
+		funcDecl := geminiTools[0].FunctionDeclarations[0]
+		properties, ok := funcDecl.Parameters["properties"].(map[string]interface{})
+		assert.True(t, ok)
+		
+		config, ok := properties["config"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, "object", config["type"])
+		
+		configProps, ok := config["properties"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Contains(t, configProps, "timeout")
+		assert.Contains(t, configProps, "retries")
+		
+		// Check nested required fields are converted to []interface{}
+		configRequired, ok := config["required"].([]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, []interface{}{"timeout"}, configRequired)
+	})
+
+	t.Run("Convert tool with arrays", func(t *testing.T) {
+		mockTools := []tools.BaseTool{
+			&mockTool{
+				name:        "array_tool",
+				description: "A tool with array parameters",
+				parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"items": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"name": map[string]interface{}{
+										"type": "string",
+									},
+									"value": map[string]interface{}{
+										"type": "string",
+									},
+								},
+								"required": []string{"name"},
+							},
+						},
+					},
+				},
+				required: []string{"items"},
+			},
+		}
+
+		geminiTools, err := client.convertToolsToGemini(mockTools)
+		require.NoError(t, err)
+		assert.Len(t, geminiTools, 1)
+		
+		funcDecl := geminiTools[0].FunctionDeclarations[0]
+		properties, ok := funcDecl.Parameters["properties"].(map[string]interface{})
+		assert.True(t, ok)
+		
+		items, ok := properties["items"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, "array", items["type"])
+		
+		itemsSchema, ok := items["items"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, "object", itemsSchema["type"])
+		
+		// Check array item required fields are converted
+		itemRequired, ok := itemsSchema["required"].([]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, []interface{}{"name"}, itemRequired)
+	})
+
+	t.Run("Error on missing tool name", func(t *testing.T) {
+		mockTools := []tools.BaseTool{
+			&mockTool{
+				name:        "", // Missing name
+				description: "A tool without name",
+				parameters:  nil,
+			},
+		}
+
+		_, err := client.convertToolsToGemini(mockTools)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "tool name is required")
+	})
+
+	t.Run("Error on missing tool description", func(t *testing.T) {
+		mockTools := []tools.BaseTool{
+			&mockTool{
+				name:        "test_tool",
+				description: "", // Missing description
+				parameters:  nil,
+			},
+		}
+
+		_, err := client.convertToolsToGemini(mockTools)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "tool description is required")
+	})
+
+	t.Run("Error on required field not in properties", func(t *testing.T) {
+		mockTools := []tools.BaseTool{
+			&mockTool{
+				name:        "invalid_tool",
+				description: "A tool with invalid required field",
+				parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"message": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+				required: []string{"missing_field"}, // Field not in properties
+			},
+		}
+
+		_, err := client.convertToolsToGemini(mockTools)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "required field missing_field not found in properties")
+	})
 }
 
 func TestConvertGeminiResponseToInternal(t *testing.T) {
@@ -801,4 +996,1023 @@ func TestGenerateToolCallID(t *testing.T) {
 	assert.NotEqual(t, id1, id2)
 	assert.Contains(t, id1, "call_")
 	assert.Contains(t, id2, "call_")
+}
+
+func TestValidateToolDefinition(t *testing.T) {
+	client := &customGeminiClient{}
+
+	t.Run("Valid tool definition", func(t *testing.T) {
+		toolInfo := tools.ToolInfo{
+			Name:        "valid_tool",
+			Description: "A valid tool",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"param1": map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+			Required: []string{"param1"},
+		}
+
+		err := client.validateToolDefinition(toolInfo)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Missing name", func(t *testing.T) {
+		toolInfo := tools.ToolInfo{
+			Name:        "",
+			Description: "A tool without name",
+		}
+
+		err := client.validateToolDefinition(toolInfo)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "tool name is required")
+	})
+
+	t.Run("Missing description", func(t *testing.T) {
+		toolInfo := tools.ToolInfo{
+			Name:        "test_tool",
+			Description: "",
+		}
+
+		err := client.validateToolDefinition(toolInfo)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "tool description is required")
+	})
+
+	t.Run("Required field not in properties", func(t *testing.T) {
+		toolInfo := tools.ToolInfo{
+			Name:        "invalid_tool",
+			Description: "Invalid tool",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"param1": map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+			Required: []string{"missing_param"},
+		}
+
+		err := client.validateToolDefinition(toolInfo)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "required field missing_param not found in properties")
+	})
+
+	t.Run("Required fields but no properties", func(t *testing.T) {
+		toolInfo := tools.ToolInfo{
+			Name:        "invalid_tool",
+			Description: "Invalid tool",
+			Parameters: map[string]interface{}{
+				"type": "object",
+			},
+			Required: []string{"param1"},
+		}
+
+		err := client.validateToolDefinition(toolInfo)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "tool has required fields but no properties defined")
+	})
+
+	t.Run("Properties not an object", func(t *testing.T) {
+		toolInfo := tools.ToolInfo{
+			Name:        "invalid_tool",
+			Description: "Invalid tool",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": "not an object",
+			},
+			Required: []string{"param1"},
+		}
+
+		err := client.validateToolDefinition(toolInfo)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "properties must be an object")
+	})
+
+	t.Run("Tool with nil parameters", func(t *testing.T) {
+		toolInfo := tools.ToolInfo{
+			Name:        "simple_tool",
+			Description: "A simple tool",
+			Parameters:  nil,
+			Required:    nil,
+		}
+
+		err := client.validateToolDefinition(toolInfo)
+		assert.NoError(t, err)
+	})
+}
+
+func TestConvertParameterSchema(t *testing.T) {
+	client := &customGeminiClient{}
+
+	t.Run("Nil schema", func(t *testing.T) {
+		result, err := client.convertParameterSchema(nil, nil)
+		assert.NoError(t, err)
+		
+		expected := map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		}
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("Simple object schema", func(t *testing.T) {
+		schema := map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type": "string",
+				},
+			},
+		}
+		required := []string{"name"}
+
+		result, err := client.convertParameterSchema(schema, required)
+		assert.NoError(t, err)
+		
+		assert.Equal(t, "object", result["type"])
+		assert.Equal(t, required, result["required"])
+		
+		properties, ok := result["properties"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Contains(t, properties, "name")
+	})
+
+	t.Run("Nested object schema", func(t *testing.T) {
+		schema := map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"config": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"timeout": map[string]interface{}{
+							"type": "number",
+						},
+					},
+					"required": []string{"timeout"},
+				},
+			},
+		}
+		required := []string{"config"}
+
+		result, err := client.convertParameterSchema(schema, required)
+		assert.NoError(t, err)
+		
+		properties, ok := result["properties"].(map[string]interface{})
+		assert.True(t, ok)
+		
+		config, ok := properties["config"].(map[string]interface{})
+		assert.True(t, ok)
+		
+		// Check that nested required fields are converted to []interface{}
+		configRequired, ok := config["required"].([]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, []interface{}{"timeout"}, configRequired)
+	})
+}
+
+func TestConvertSchemaValue(t *testing.T) {
+	client := &customGeminiClient{}
+
+	t.Run("String value", func(t *testing.T) {
+		result, err := client.convertSchemaValue("test")
+		assert.NoError(t, err)
+		assert.Equal(t, "test", result)
+	})
+
+	t.Run("Number value", func(t *testing.T) {
+		result, err := client.convertSchemaValue(42)
+		assert.NoError(t, err)
+		assert.Equal(t, 42, result)
+	})
+
+	t.Run("Boolean value", func(t *testing.T) {
+		result, err := client.convertSchemaValue(true)
+		assert.NoError(t, err)
+		assert.Equal(t, true, result)
+	})
+
+	t.Run("Simple object", func(t *testing.T) {
+		value := map[string]interface{}{
+			"type":        "string",
+			"description": "A string field",
+		}
+
+		result, err := client.convertSchemaValue(value)
+		assert.NoError(t, err)
+		
+		resultMap, ok := result.(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, "string", resultMap["type"])
+		assert.Equal(t, "A string field", resultMap["description"])
+	})
+
+	t.Run("Nested object", func(t *testing.T) {
+		value := map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"nested": map[string]interface{}{
+					"type": "string",
+				},
+			},
+		}
+
+		result, err := client.convertSchemaValue(value)
+		assert.NoError(t, err)
+		
+		resultMap, ok := result.(map[string]interface{})
+		assert.True(t, ok)
+		
+		properties, ok := resultMap["properties"].(map[string]interface{})
+		assert.True(t, ok)
+		
+		nested, ok := properties["nested"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, "string", nested["type"])
+	})
+
+	t.Run("String array", func(t *testing.T) {
+		value := []string{"item1", "item2"}
+
+		result, err := client.convertSchemaValue(value)
+		assert.NoError(t, err)
+		
+		resultArray, ok := result.([]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, []interface{}{"item1", "item2"}, resultArray)
+	})
+
+	t.Run("Interface array", func(t *testing.T) {
+		value := []interface{}{
+			"string",
+			42,
+			map[string]interface{}{
+				"type": "object",
+			},
+		}
+
+		result, err := client.convertSchemaValue(value)
+		assert.NoError(t, err)
+		
+		resultArray, ok := result.([]interface{})
+		assert.True(t, ok)
+		assert.Len(t, resultArray, 3)
+		assert.Equal(t, "string", resultArray[0])
+		assert.Equal(t, 42, resultArray[1])
+		
+		objItem, ok := resultArray[2].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, "object", objItem["type"])
+	})
+}
+
+func TestCustomGeminiSendMethod(t *testing.T) {
+	client := &customGeminiClient{
+		baseURL: "https://generativelanguage.googleapis.com",
+		apiKey:  "test-api-key",
+		providerOptions: providerClientOptions{
+			maxTokens: 1000,
+			model: func(config.SelectedModelType) catwalk.Model {
+				return catwalk.Model{
+					ID:                "gemini-1.5-pro",
+					Name:              "Gemini 1.5 Pro",
+					ContextWindow:     2097152,
+					DefaultMaxTokens:  8192,
+				}
+			},
+		},
+	}
+
+	t.Run("buildGeminiRequest with simple messages", func(t *testing.T) {
+		messages := []message.Message{
+			{
+				Role: message.User,
+				Parts: []message.ContentPart{
+					message.TextContent{Text: "Hello, how are you?"},
+				},
+			},
+		}
+
+		request, err := client.buildGeminiRequest(messages, nil)
+		require.NoError(t, err)
+		assert.NotNil(t, request)
+		assert.Len(t, request.Contents, 1)
+		assert.Equal(t, GeminiRoleUser, request.Contents[0].Role)
+		assert.Equal(t, "Hello, how are you?", request.Contents[0].Parts[0].Text)
+		assert.Nil(t, request.SystemInstruction)
+		assert.Nil(t, request.Tools)
+		assert.NotNil(t, request.GenerationConfig)
+		assert.Equal(t, 1000, *request.GenerationConfig.MaxOutputTokens)
+	})
+
+	t.Run("buildGeminiRequest with system message and tools", func(t *testing.T) {
+		messages := []message.Message{
+			{
+				Role: message.System,
+				Parts: []message.ContentPart{
+					message.TextContent{Text: "You are a helpful assistant."},
+				},
+			},
+			{
+				Role: message.User,
+				Parts: []message.ContentPart{
+					message.TextContent{Text: "What's the weather like?"},
+				},
+			},
+		}
+
+		tools := []tools.BaseTool{
+			&mockTool{
+				name:        "get_weather",
+				description: "Get current weather",
+				parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"location": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+				required: []string{"location"},
+			},
+		}
+
+		request, err := client.buildGeminiRequest(messages, tools)
+		require.NoError(t, err)
+		assert.NotNil(t, request)
+		
+		// Check system instruction
+		assert.NotNil(t, request.SystemInstruction)
+		assert.Equal(t, "You are a helpful assistant.", request.SystemInstruction.Parts[0].Text)
+		
+		// Check contents
+		assert.Len(t, request.Contents, 1)
+		assert.Equal(t, GeminiRoleUser, request.Contents[0].Role)
+		assert.Equal(t, "What's the weather like?", request.Contents[0].Parts[0].Text)
+		
+		// Check tools
+		assert.Len(t, request.Tools, 1)
+		assert.Len(t, request.Tools[0].FunctionDeclarations, 1)
+		assert.Equal(t, "get_weather", request.Tools[0].FunctionDeclarations[0].Name)
+		
+		// Check tool config
+		assert.NotNil(t, request.ToolConfig)
+		assert.NotNil(t, request.ToolConfig.FunctionCallingConfig)
+		assert.Equal(t, GeminiFunctionCallingModeAuto, request.ToolConfig.FunctionCallingConfig.Mode)
+	})
+
+	t.Run("buildGenerationConfig with extra body parameters", func(t *testing.T) {
+		clientWithExtraBody := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				maxTokens: 500,
+				extraBody: map[string]interface{}{
+					"temperature": 0.7,
+					"topP":        0.9,
+					"topK":        40,
+				},
+			},
+		}
+
+		config := clientWithExtraBody.buildGenerationConfig()
+		require.NotNil(t, config)
+		assert.Equal(t, 500, *config.MaxOutputTokens)
+		assert.Equal(t, 0.7, *config.Temperature)
+		assert.Equal(t, 0.9, *config.TopP)
+		assert.Equal(t, 40, *config.TopK)
+	})
+
+	t.Run("extractSafetySettings from extra body", func(t *testing.T) {
+		clientWithSafety := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				extraBody: map[string]interface{}{
+					"safetySettings": []interface{}{
+						map[string]interface{}{
+							"category":  "HARM_CATEGORY_HARASSMENT",
+							"threshold": "BLOCK_MEDIUM_AND_ABOVE",
+						},
+						map[string]interface{}{
+							"category":  "HARM_CATEGORY_HATE_SPEECH",
+							"threshold": "BLOCK_LOW_AND_ABOVE",
+						},
+					},
+				},
+			},
+		}
+
+		settings := clientWithSafety.extractSafetySettings()
+		assert.Len(t, settings, 2)
+		assert.Equal(t, "HARM_CATEGORY_HARASSMENT", settings[0].Category)
+		assert.Equal(t, "BLOCK_MEDIUM_AND_ABOVE", settings[0].Threshold)
+		assert.Equal(t, "HARM_CATEGORY_HATE_SPEECH", settings[1].Category)
+		assert.Equal(t, "BLOCK_LOW_AND_ABOVE", settings[1].Threshold)
+	})
+
+	t.Run("convertFinishReason", func(t *testing.T) {
+		assert.Equal(t, message.FinishReasonEndTurn, client.convertFinishReason(GeminiFinishReasonStop))
+		assert.Equal(t, message.FinishReasonMaxTokens, client.convertFinishReason(GeminiFinishReasonMaxTokens))
+		assert.Equal(t, message.FinishReasonPermissionDenied, client.convertFinishReason(GeminiFinishReasonSafety))
+		assert.Equal(t, message.FinishReasonPermissionDenied, client.convertFinishReason(GeminiFinishReasonRecitation))
+		assert.Equal(t, message.FinishReasonUnknown, client.convertFinishReason("UNKNOWN_REASON"))
+	})
+
+	t.Run("getModelID", func(t *testing.T) {
+		modelID := client.getModelID()
+		assert.Equal(t, "gemini-1.5-pro", modelID)
+		
+		// Test with empty model ID
+		clientWithEmptyModel := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: ""}
+				},
+			},
+		}
+		modelID = clientWithEmptyModel.getModelID()
+		assert.Equal(t, "gemini-1.5-pro", modelID) // Should use default
+	})
+}
+
+func TestStreamingSupportDetection(t *testing.T) {
+	t.Run("checkStreamingSupport with successful detection", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL:            "https://generativelanguage.googleapis.com",
+			apiKey:             "test-key",
+			streamingSupported: false,
+			streamingChecked:   false,
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Mock HTTP client that returns success for streaming detection
+		client.httpClient = &http.Client{
+			Transport: &mockRoundTripper{
+				response: &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader("")),
+				},
+			},
+		}
+
+		ctx := context.Background()
+		supported := client.checkStreamingSupport(ctx)
+		
+		assert.True(t, supported)
+		assert.True(t, client.streamingSupported)
+		assert.True(t, client.streamingChecked)
+	})
+
+	t.Run("checkStreamingSupport with 404 not found", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL:            "https://generativelanguage.googleapis.com",
+			apiKey:             "test-key",
+			streamingSupported: false,
+			streamingChecked:   false,
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Mock HTTP client that returns 404 for streaming detection
+		client.httpClient = &http.Client{
+			Transport: &mockRoundTripper{
+				response: &http.Response{
+					StatusCode: 404,
+					Body:       io.NopCloser(strings.NewReader("")),
+				},
+			},
+		}
+
+		ctx := context.Background()
+		supported := client.checkStreamingSupport(ctx)
+		
+		assert.False(t, supported)
+		assert.False(t, client.streamingSupported)
+		assert.True(t, client.streamingChecked)
+	})
+
+	t.Run("checkStreamingSupport with 501 not implemented", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL:            "https://generativelanguage.googleapis.com",
+			apiKey:             "test-key",
+			streamingSupported: false,
+			streamingChecked:   false,
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Mock HTTP client that returns 501 for streaming detection
+		client.httpClient = &http.Client{
+			Transport: &mockRoundTripper{
+				response: &http.Response{
+					StatusCode: 501,
+					Body:       io.NopCloser(strings.NewReader("")),
+				},
+			},
+		}
+
+		ctx := context.Background()
+		supported := client.checkStreamingSupport(ctx)
+		
+		assert.False(t, supported)
+		assert.False(t, client.streamingSupported)
+		assert.True(t, client.streamingChecked)
+	})
+
+	t.Run("checkStreamingSupport with network error", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL:            "https://generativelanguage.googleapis.com",
+			apiKey:             "test-key",
+			streamingSupported: false,
+			streamingChecked:   false,
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Mock HTTP client that returns network error
+		client.httpClient = &http.Client{
+			Transport: &mockRoundTripper{
+				err: fmt.Errorf("network error"),
+			},
+		}
+
+		ctx := context.Background()
+		supported := client.checkStreamingSupport(ctx)
+		
+		assert.False(t, supported)
+		assert.False(t, client.streamingSupported)
+		assert.True(t, client.streamingChecked)
+	})
+
+	t.Run("checkStreamingSupport caches result", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL:            "https://generativelanguage.googleapis.com",
+			apiKey:             "test-key",
+			streamingSupported: true,  // Already cached as supported
+			streamingChecked:   true,  // Already checked
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Mock HTTP client that would return error, but shouldn't be called
+		client.httpClient = &http.Client{
+			Transport: &mockRoundTripper{
+				err: fmt.Errorf("should not be called"),
+			},
+		}
+
+		ctx := context.Background()
+		supported := client.checkStreamingSupport(ctx)
+		
+		// Should return cached result without making HTTP request
+		assert.True(t, supported)
+		assert.True(t, client.streamingSupported)
+		assert.True(t, client.streamingChecked)
+	})
+
+	t.Run("isStreamingForced returns true when configured", func(t *testing.T) {
+		client := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{
+					"force_non_streaming": true,
+				},
+			},
+		}
+
+		assert.True(t, client.isStreamingForced())
+	})
+
+	t.Run("isStreamingForced returns false when not configured", func(t *testing.T) {
+		client := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{},
+			},
+		}
+
+		assert.False(t, client.isStreamingForced())
+	})
+
+	t.Run("getSimulationChunkSize returns configured value", func(t *testing.T) {
+		client := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{
+					"chunk_size": 50,
+				},
+			},
+		}
+
+		assert.Equal(t, 50, client.getSimulationChunkSize())
+	})
+
+	t.Run("getSimulationChunkSize returns default when not configured", func(t *testing.T) {
+		client := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{},
+			},
+		}
+
+		assert.Equal(t, 20, client.getSimulationChunkSize())
+	})
+
+	t.Run("getSimulationDelay returns configured value", func(t *testing.T) {
+		client := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{
+					"simulation_delay": 100,
+				},
+			},
+		}
+
+		assert.Equal(t, 100*time.Millisecond, client.getSimulationDelay())
+	})
+
+	t.Run("getSimulationDelay returns default when not configured", func(t *testing.T) {
+		client := &customGeminiClient{
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{},
+			},
+		}
+
+		assert.Equal(t, 20*time.Millisecond, client.getSimulationDelay())
+	})
+}
+
+func TestStreamMethod(t *testing.T) {
+	t.Run("stream method with forced non-streaming", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL: "https://generativelanguage.googleapis.com",
+			apiKey:  "test-key",
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{
+					"force_non_streaming": true,
+				},
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Mock HTTP client for non-streaming send method
+		client.httpClient = &http.Client{
+			Transport: &mockRoundTripper{
+				response: &http.Response{
+					StatusCode: 200,
+					Body: io.NopCloser(strings.NewReader(`{
+						"candidates": [{
+							"content": {
+								"parts": [{"text": "Hello world"}],
+								"role": "model"
+							},
+							"finishReason": "STOP"
+						}]
+					}`)),
+				},
+			},
+		}
+
+		ctx := context.Background()
+		messages := []message.Message{
+			{
+				Role:  message.User,
+				Parts: []message.ContentPart{message.TextContent{Text: "Hello"}},
+			},
+		}
+
+		eventChan := client.stream(ctx, messages, nil)
+		
+		// Collect events
+		var events []ProviderEvent
+		for event := range eventChan {
+			events = append(events, event)
+		}
+
+		// Should have simulated streaming events
+		assert.Greater(t, len(events), 0)
+		
+		// Check for expected event types
+		eventTypes := make(map[EventType]bool)
+		for _, event := range events {
+			eventTypes[event.Type] = true
+		}
+		
+		assert.True(t, eventTypes[EventContentStart])
+		assert.True(t, eventTypes[EventContentDelta])
+		assert.True(t, eventTypes[EventContentStop])
+		assert.True(t, eventTypes[EventComplete])
+	})
+
+	t.Run("stream method with streaming detection failure", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL:            "https://generativelanguage.googleapis.com",
+			apiKey:             "test-key",
+			streamingSupported: false,
+			streamingChecked:   false,
+			providerOptions: providerClientOptions{
+				extraBody: map[string]any{},
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Mock HTTP client that returns 404 for streaming detection and success for regular send
+		callCount := 0
+		client.httpClient = &http.Client{
+			Transport: mockRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				callCount++
+				if strings.Contains(req.URL.Path, "streamGenerateContent") {
+					// First call is streaming detection, return 404
+					return &http.Response{
+						StatusCode: 404,
+						Body:       io.NopCloser(strings.NewReader("")),
+					}, nil
+				}
+				// Second call is regular send, return success
+				return &http.Response{
+					StatusCode: 200,
+					Body: io.NopCloser(strings.NewReader(`{
+						"candidates": [{
+							"content": {
+								"parts": [{"text": "Hello from simulation"}],
+								"role": "model"
+							},
+							"finishReason": "STOP"
+						}]
+					}`)),
+				}, nil
+			}),
+		}
+
+		ctx := context.Background()
+		messages := []message.Message{
+			{
+				Role:  message.User,
+				Parts: []message.ContentPart{message.TextContent{Text: "Hello"}},
+			},
+		}
+
+		eventChan := client.stream(ctx, messages, nil)
+		
+		// Collect events
+		var events []ProviderEvent
+		for event := range eventChan {
+			events = append(events, event)
+		}
+
+		// Should have made both streaming detection call and regular send call
+		assert.Equal(t, 2, callCount)
+		
+		// Should have simulated streaming events
+		assert.Greater(t, len(events), 0)
+		
+		// Verify streaming was marked as not supported
+		assert.False(t, client.streamingSupported)
+		assert.True(t, client.streamingChecked)
+	})
+}
+
+// Mock HTTP transport for testing
+type mockRoundTripper struct {
+	response *http.Response
+	err      error
+}
+
+func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.response, nil
+}
+
+// Mock HTTP transport with function for more complex scenarios
+type mockRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f mockRoundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestCustomGeminiStreamingResponse(t *testing.T) {
+	t.Run("processStreamResponse with text content", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL: "https://generativelanguage.googleapis.com",
+			apiKey:  "test-key",
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Create mock SSE response
+		sseData := `data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}
+
+data: {"candidates":[{"content":{"parts":[{"text":" world"}],"role":"model"}}]}
+
+data: {"candidates":[{"content":{"parts":[{"text":"!"}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}
+
+`
+
+		resp := &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseData)),
+		}
+
+		eventChan := make(chan ProviderEvent, 10)
+		go func() {
+			defer close(eventChan)
+			success := client.processStreamResponse(resp, eventChan)
+			assert.True(t, success)
+		}()
+
+		// Collect events
+		var events []ProviderEvent
+		for event := range eventChan {
+			events = append(events, event)
+		}
+
+		// Verify event sequence
+		require.GreaterOrEqual(t, len(events), 5) // At least: start, 3 deltas, stop, complete
+
+		// Check event types and content
+		assert.Equal(t, EventContentStart, events[0].Type)
+		
+		// Find content delta events
+		var contentDeltas []string
+		for _, event := range events {
+			if event.Type == EventContentDelta {
+				contentDeltas = append(contentDeltas, event.Content)
+			}
+		}
+		
+		// Should have received text chunks
+		assert.Contains(t, contentDeltas, "Hello")
+		assert.Contains(t, contentDeltas, " world")
+		assert.Contains(t, contentDeltas, "!")
+
+		// Check final events
+		assert.Equal(t, EventContentStop, events[len(events)-2].Type)
+		assert.Equal(t, EventComplete, events[len(events)-1].Type)
+		
+		// Verify final response
+		finalEvent := events[len(events)-1]
+		require.NotNil(t, finalEvent.Response)
+		assert.Equal(t, "Hello world!", finalEvent.Response.Content)
+		assert.Equal(t, int64(5), finalEvent.Response.Usage.InputTokens)
+		assert.Equal(t, int64(3), finalEvent.Response.Usage.OutputTokens)
+		assert.Equal(t, message.FinishReasonEndTurn, finalEvent.Response.FinishReason)
+	})
+
+	t.Run("processStreamResponse with function calls", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL: "https://generativelanguage.googleapis.com",
+			apiKey:  "test-key",
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Create mock SSE response with function call
+		sseData := `data: {"candidates":[{"content":{"parts":[{"text":"I'll help you get the weather."}],"role":"model"}}]}
+
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"New York"}}}],"role":"model"}}]}
+
+data: {"candidates":[{"content":{"parts":[{"text":"The weather is sunny."}],"role":"model"}],"finishReason":"STOP"}]}
+
+`
+
+		resp := &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseData)),
+		}
+
+		eventChan := make(chan ProviderEvent, 20)
+		go func() {
+			defer close(eventChan)
+			success := client.processStreamResponse(resp, eventChan)
+			assert.True(t, success)
+		}()
+
+		// Collect events
+		var events []ProviderEvent
+		for event := range eventChan {
+			events = append(events, event)
+		}
+
+		// Verify we have tool use events
+		var toolUseStartEvents []ProviderEvent
+		var toolUseDeltaEvents []ProviderEvent
+		var toolUseStopEvents []ProviderEvent
+		
+		for _, event := range events {
+			switch event.Type {
+			case EventToolUseStart:
+				toolUseStartEvents = append(toolUseStartEvents, event)
+			case EventToolUseDelta:
+				toolUseDeltaEvents = append(toolUseDeltaEvents, event)
+			case EventToolUseStop:
+				toolUseStopEvents = append(toolUseStopEvents, event)
+			}
+		}
+
+		// Should have tool use events
+		assert.Len(t, toolUseStartEvents, 1)
+		assert.Len(t, toolUseDeltaEvents, 1)
+		assert.Len(t, toolUseStopEvents, 1)
+
+		// Verify tool call details
+		toolCall := toolUseStartEvents[0].ToolCall
+		require.NotNil(t, toolCall)
+		assert.Equal(t, "get_weather", toolCall.Name)
+		assert.Contains(t, toolCall.Input, "New York")
+
+		// Verify final response includes tool call
+		finalEvent := events[len(events)-1]
+		require.NotNil(t, finalEvent.Response)
+		assert.Len(t, finalEvent.Response.ToolCalls, 1)
+		assert.Equal(t, "get_weather", finalEvent.Response.ToolCalls[0].Name)
+	})
+
+	t.Run("processStreamResponse with malformed JSON", func(t *testing.T) {
+		client := &customGeminiClient{
+			baseURL: "https://generativelanguage.googleapis.com",
+			apiKey:  "test-key",
+			providerOptions: providerClientOptions{
+				modelType: config.SelectedModelTypeLarge,
+				model: func(config.SelectedModelType) catwalk.Model {
+					return catwalk.Model{ID: "gemini-1.5-pro"}
+				},
+			},
+		}
+
+		// Create mock SSE response with malformed JSON
+		sseData := `data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}
+
+data: {invalid json}
+
+data: {"candidates":[{"content":{"parts":[{"text":" world"}],"role":"model"},"finishReason":"STOP"}]}
+
+`
+
+		resp := &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseData)),
+		}
+
+		eventChan := make(chan ProviderEvent, 10)
+		go func() {
+			defer close(eventChan)
+			success := client.processStreamResponse(resp, eventChan)
+			assert.True(t, success) // Should still succeed, just skip malformed chunks
+		}()
+
+		// Collect events
+		var events []ProviderEvent
+		for event := range eventChan {
+			events = append(events, event)
+		}
+
+		// Should still process valid chunks
+		var contentDeltas []string
+		for _, event := range events {
+			if event.Type == EventContentDelta {
+				contentDeltas = append(contentDeltas, event.Content)
+			}
+		}
+		
+		assert.Contains(t, contentDeltas, "Hello")
+		assert.Contains(t, contentDeltas, " world")
+
+		// Verify final response
+		finalEvent := events[len(events)-1]
+		require.NotNil(t, finalEvent.Response)
+		assert.Equal(t, "Hello world", finalEvent.Response.Content)
+	})
 }
