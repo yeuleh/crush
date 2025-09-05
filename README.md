@@ -386,6 +386,136 @@ Custom Anthropic-compatible providers follow this format:
 }
 ```
 
+#### Custom Gemini Provider
+
+The `custom-gemini` provider offers direct HTTP API integration with Google's Gemini API, providing enhanced control over requests and responses without relying on the genai client library. This provider supports automatic streaming detection with graceful fallback to simulated streaming when the API doesn't support it.
+
+##### Basic Configuration
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "providers": {
+    "custom-gemini": {
+      "type": "custom-gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "api_key": "$GEMINI_API_KEY",
+      "models": [
+        {
+          "id": "gemini-1.5-pro",
+          "name": "Gemini 1.5 Pro",
+          "context_window": 2097152,
+          "default_max_tokens": 8192,
+          "supports_attachments": true
+        },
+        {
+          "id": "gemini-1.5-flash",
+          "name": "Gemini 1.5 Flash",
+          "context_window": 1048576,
+          "default_max_tokens": 8192,
+          "supports_attachments": true
+        }
+      ]
+    }
+  }
+}
+```
+
+##### Advanced Configuration
+
+For more control over the provider behavior, you can use additional configuration options:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "providers": {
+    "custom-gemini": {
+      "type": "custom-gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "api_key": "$GEMINI_API_KEY",
+      "extra_headers": {
+        "User-Agent": "CustomGeminiClient/1.0"
+      },
+      "extra_body": {
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+          }
+        ],
+        "force_non_streaming": false,
+        "simulation_delay": 20,
+        "chunk_size": 20
+      },
+      "models": [
+        {
+          "id": "gemini-1.5-pro",
+          "name": "Gemini 1.5 Pro",
+          "context_window": 2097152,
+          "default_max_tokens": 8192,
+          "supports_attachments": true
+        }
+      ]
+    }
+  }
+}
+```
+
+##### Local/Incomplete API Configuration
+
+The custom-gemini provider includes intelligent fallback mechanisms for local or incomplete API implementations:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "providers": {
+    "local-gemini": {
+      "type": "custom-gemini",
+      "base_url": "http://localhost:8080",
+      "api_key": "local-key",
+      "extra_body": {
+        "force_non_streaming": true,
+        "simulation_delay": 50,
+        "chunk_size": 10
+      },
+      "models": [
+        {
+          "id": "gemini-pro",
+          "name": "Local Gemini Pro",
+          "context_window": 32768,
+          "default_max_tokens": 4096
+        }
+      ]
+    }
+  }
+}
+```
+
+##### Configuration Options
+
+The custom-gemini provider supports these specific configuration options in the `extra_body` section:
+
+- **`force_non_streaming`** (boolean): Forces the provider to use non-streaming mode even if streaming is available. Useful for APIs that have unreliable streaming support.
+- **`simulation_delay`** (number): Delay in milliseconds between chunks when simulating streaming responses. Default is 20ms.
+- **`chunk_size`** (number): Size of text chunks when simulating streaming responses. Default is 20 characters.
+- **`safetySettings`** (array): Gemini API safety settings to control content filtering.
+
+##### Automatic Fallback Behavior
+
+The custom-gemini provider automatically detects streaming support and gracefully falls back to simulated streaming when:
+
+- The API endpoint doesn't support streaming (returns 404 or 501)
+- Streaming requests fail due to network issues
+- The `force_non_streaming` option is enabled
+
+When fallback occurs, the provider:
+1. Makes a standard non-streaming API call
+2. Simulates streaming events by chunking the response
+3. Maintains the same event sequence as real streaming
+4. Logs the fallback for debugging purposes
+
+This ensures consistent behavior regardless of the underlying API capabilities, making it ideal for development environments, local APIs, or incomplete Gemini API implementations.
+
 #### Custom Endpoint URLs
 
 For OpenAI-compatible providers, you can specify a complete API endpoint URL by adding a `#` at the end of the `base_url`. This is useful when working with API gateways, proxies, or services that use non-standard endpoint paths.
