@@ -1,0 +1,762 @@
+# Crush Custom-Gemini Provider 开发任务清单
+
+## 项目里程碑
+
+### Milestone 1: 核心功能实现 (P0)
+**预计时间**: 5-7 个工作日  
+**目标**: 实现基本的 `custom-gemini` Provider 功能，支持双模式 URL 和基础消息收发
+
+### Milestone 2: 高级功能实现 (P1) 
+**预计时间**: 4-5 个工作日  
+**目标**: 完善流式响应、错误处理和监控功能
+
+### Milestone 3: 扩展功能实现 (P2)
+**预计时间**: 4-6 个工作日  
+**目标**: 完成工具调用、图像支持等高级特性
+
+---
+
+## Milestone 1: 核心功能实现
+
+### Task 1.1: Provider 类型系统扩展
+**需求编号**: US001  
+**预计时间**: 0.5 天
+
+#### 开发任务
+1. **扩展 Provider 类型定义**
+   ```bash
+   # 文件路径: internal/llm/provider/provider.go
+   # 或者根据项目结构在适当位置添加
+   ```
+   - [ ] 在 `NewProvider` 函数中添加 `custom-gemini` case
+   - [ ] 定义 `CustomGeminiClient` 接口类型
+   - [ ] 实现 `newCustomGeminiClient` 构造函数
+
+2. **配置类型验证**
+   - [ ] 确保配置解析支持 `custom-gemini` 类型
+   - [ ] 验证不影响现有 Provider 类型解析
+
+#### 测试任务
+- [ ] 编写 Provider 工厂函数单元测试
+- [ ] 验证配置解析兼容性测试
+- [ ] 确认现有 `gemini` Provider 不受影响
+
+#### 验收任务
+- [ ] 配置文件中可成功定义 `custom-gemini` Provider
+- [ ] 现有 Provider 功能完全正常
+- [ ] 代码审查通过
+
+#### Git 提交
+```bash
+git commit -m "feat: add custom-gemini provider type support
+
+- Add CustomGeminiClient interface and constructor
+- Extend NewProvider factory to handle custom-gemini type
+- Maintain backward compatibility with existing providers
+- Add basic configuration validation
+
+Addresses: US001"
+```
+
+---
+
+### Task 1.2: URL 解析器实现
+**需求编号**: US002  
+**预计时间**: 1 天
+
+#### 开发任务
+1. **创建 URL 解析器组件**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_url.go
+   ```
+   - [ ] 定义 `urlMode` 枚举类型
+   - [ ] 实现 `urlResolver` 结构体
+   - [ ] 实现 `newURLResolver` 构造函数
+   - [ ] 实现 `buildURL` 方法支持两种模式
+
+2. **URL 模式检测逻辑**
+   - [ ] 检测 base_url 是否以 "#" 结尾
+   - [ ] 标准模式：路径拼接逻辑
+   - [ ] 完整模式：直接使用去除 "#" 的 URL
+   - [ ] URL 格式验证和错误处理
+
+#### 测试任务
+- [ ] 编写 URL 解析器单元测试
+  - [ ] 标准模式测试用例
+  - [ ] 完整 URL 模式测试用例
+  - [ ] 边界条件测试（空 URL、无效 URL）
+- [ ] 环境变量解析测试
+
+#### 验收任务
+- [ ] 两种 URL 模式都能正确解析
+- [ ] 无效 URL 格式有清晰错误提示
+- [ ] 测试覆盖率 > 90%
+
+#### Git 提交
+```bash
+git commit -m "feat: implement dual-mode URL resolver for custom-gemini
+
+- Add urlResolver with standard and complete URL modes
+- Support base_url ending with '#' for direct endpoint access
+- Include comprehensive URL validation and error handling
+- Add extensive unit tests for both modes
+
+Addresses: US002"
+```
+
+---
+
+### Task 1.3: HTTP 客户端基础结构
+**需求编号**: US003  
+**预计时间**: 1 天
+
+#### 开发任务
+1. **创建客户端核心结构**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini.go
+   ```
+   - [ ] 定义 `customGeminiClient` 结构体
+   - [ ] 实现 `ProviderClient` 接口方法
+   - [ ] 集成 URL 解析器和 HTTP 客户端
+   - [ ] 配置 HTTP 客户端（超时、连接池等）
+
+2. **调试支持集成**
+   - [ ] 在调试模式下使用 `log.NewHTTPClient()`
+   - [ ] 集成现有日志系统
+   - [ ] 配置 HTTP 传输参数
+
+#### 测试任务
+- [ ] 客户端初始化测试
+- [ ] HTTP 客户端配置测试
+- [ ] 调试模式集成测试
+
+#### 验收任务
+- [ ] 客户端可成功初始化
+- [ ] 调试模式下能看到 HTTP 日志
+- [ ] 接口实现完整
+
+#### Git 提交
+```bash
+git commit -m "feat: implement customGeminiClient basic structure
+
+- Add customGeminiClient with HTTP client integration
+- Implement ProviderClient interface methods (skeleton)
+- Integrate URL resolver and debug logging support
+- Configure HTTP client with appropriate timeouts
+
+Addresses: US003"
+```
+
+---
+
+### Task 1.4: Gemini API 请求构建
+**需求编号**: US003, US005  
+**预计时间**: 1.5 天
+
+#### 开发任务
+1. **定义 Gemini API 数据结构**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_types.go
+   ```
+   - [ ] 定义 `geminiRequest` 及相关结构体
+   - [ ] 定义 `geminiResponse` 及相关结构体
+   - [ ] 定义流式响应结构 `geminiStreamChunk`
+   - [ ] 添加 JSON 标签和验证
+
+2. **实现消息转换逻辑**
+   - [ ] 实现 `convertMessages` 方法
+   - [ ] 处理用户消息转换
+   - [ ] 处理助手消息转换
+   - [ ] 处理系统消息转换
+   - [ ] 处理工具消息转换（基础版）
+
+3. **HTTP 请求构建**
+   - [ ] 实现 `buildHTTPRequest` 方法
+   - [ ] 设置正确的 HTTP 头（Content-Type, Authorization）
+   - [ ] JSON 序列化请求体
+   - [ ] 处理额外头信息和参数
+
+#### 测试任务
+- [ ] 消息转换单元测试
+  - [ ] 用户消息转换测试
+  - [ ] 系统消息转换测试
+  - [ ] 空消息处理测试
+- [ ] HTTP 请求构建测试
+- [ ] JSON 序列化/反序列化测试
+
+#### 验收任务
+- [ ] 各种消息类型都能正确转换
+- [ ] HTTP 请求格式符合 Gemini API 规范
+- [ ] 系统消息正确设置为 SystemInstruction
+
+#### Git 提交
+```bash
+git commit -m "feat: implement Gemini API request building
+
+- Add complete Gemini API data structures with JSON tags
+- Implement message conversion from Crush to Gemini format
+- Support system message as systemInstruction
+- Add HTTP request building with proper headers
+- Include comprehensive conversion tests
+
+Addresses: US003, US005"
+```
+
+---
+
+### Task 1.5: 基础响应解析和发送
+**需求编号**: US003, US006  
+**预计时间**: 1.5 天
+
+#### 开发任务
+1. **响应解析实现**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini.go (继续)
+   ```
+   - [ ] 实现 `parseResponse` 方法
+   - [ ] 解析 candidates 和 content
+   - [ ] 处理 finishReason 转换
+   - [ ] 解析 usage metadata
+   - [ ] 错误响应处理
+
+2. **基础发送功能**
+   - [ ] 实现 `send` 方法（非流式）
+   - [ ] HTTP 请求执行
+   - [ ] 响应状态码检查
+   - [ ] JSON 响应解析
+   - [ ] 错误处理和包装
+
+3. **Token 使用统计**
+   - [ ] 实现 `convertUsage` 方法
+   - [ ] 解析 promptTokenCount
+   - [ ] 解析 candidatesTokenCount  
+   - [ ] 解析 cachedContentTokenCount
+   - [ ] 返回 TokenUsage 结构
+
+#### 测试任务
+- [ ] 响应解析单元测试
+  - [ ] 正常响应解析测试
+  - [ ] 错误响应处理测试
+  - [ ] Token 统计解析测试
+- [ ] 发送功能集成测试
+- [ ] Mock HTTP 服务器测试
+
+#### 验收任务
+- [ ] 能成功发送请求并解析响应
+- [ ] Token 使用统计准确
+- [ ] 错误情况有适当处理
+
+#### Git 提交
+```bash
+git commit -m "feat: implement response parsing and basic send functionality
+
+- Add comprehensive Gemini API response parsing
+- Implement token usage statistics extraction
+- Add error response handling and status code checks
+- Support finish reason conversion to Crush format
+- Include mock server integration tests
+
+Addresses: US003, US006"
+```
+
+---
+
+## Milestone 2: 高级功能实现
+
+### Task 2.1: 标准模式流式响应
+**需求编号**: US004  
+**预计时间**: 2 天
+
+#### 开发任务
+1. **SSE 流式处理**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_stream.go
+   ```
+   - [ ] 实现 `streamStandard` 方法
+   - [ ] 处理 Server-Sent Events 响应
+   - [ ] 实现流式数据解析器
+   - [ ] 事件类型转换和分发
+
+2. **流式事件处理**
+   - [ ] 实现 `parseStreamChunk` 方法
+   - [ ] 处理内容增量事件
+   - [ ] 处理流式完成事件
+   - [ ] 错误和中断处理
+
+3. **集成到主 stream 方法**
+   - [ ] 实现 `stream` 方法主逻辑
+   - [ ] 根据 URL 模式选择流式策略
+   - [ ] 统一事件通道管理
+
+#### 测试任务
+- [ ] SSE 解析单元测试
+- [ ] 流式事件处理测试
+- [ ] 流式响应集成测试
+- [ ] 中断和错误场景测试
+
+#### 验收任务
+- [ ] 标准模式流式响应正常工作
+- [ ] 事件顺序正确（start -> delta -> stop -> complete）
+- [ ] 错误处理健壮
+
+#### Git 提交
+```bash
+git commit -m "feat: implement SSE streaming for standard URL mode
+
+- Add Server-Sent Events parsing for streamGenerateContent
+- Implement streaming event conversion and dispatch
+- Support content delta events with proper sequencing
+- Add comprehensive streaming tests and error handling
+- Integrate with URL resolver for standard mode detection
+
+Addresses: US004"
+```
+
+---
+
+### Task 2.2: 完整 URL 模式流式模拟
+**需求编号**: US004  
+**预计时间**: 1.5 天
+
+#### 开发任务
+1. **流式模拟实现**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_stream.go (继续)
+   ```
+   - [ ] 实现 `streamSimulated` 方法
+   - [ ] 先调用完整 URL 获取响应
+   - [ ] 实现内容分块策略
+   - [ ] 模拟合理的延迟
+
+2. **分块策略优化**
+   - [ ] 实现 `simulateStream` 方法
+   - [ ] 按单词或字符分块
+   - [ ] 随机延迟模拟
+   - [ ] 内存友好的处理
+
+3. **上下文取消支持**
+   - [ ] 支持 context 取消
+   - [ ] 优雅的流式中断
+   - [ ] 资源清理
+
+#### 测试任务
+- [ ] 流式模拟单元测试
+- [ ] 分块策略测试
+- [ ] 内容完整性验证
+- [ ] 取消和超时测试
+
+#### 验收任务
+- [ ] 完整 URL 模式能模拟流式响应
+- [ ] 分块内容完整且顺序正确
+- [ ] 性能可接受，内存使用合理
+
+#### Git 提交
+```bash
+git commit -m "feat: implement streaming simulation for complete URL mode
+
+- Add streaming simulation for direct endpoint URLs
+- Implement intelligent content chunking strategy
+- Support context cancellation and graceful interruption
+- Add realistic delay simulation and memory optimization
+- Include comprehensive simulation tests
+
+Addresses: US004"
+```
+
+---
+
+### Task 2.3: 错误处理和重试机制
+**需求编号**: US009  
+**预计时间**: 1.5 天
+
+#### 开发任务
+1. **HTTP 错误类型定义**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_errors.go
+   ```
+   - [ ] 定义 `HTTPError` 结构体
+   - [ ] 定义错误分类和常量
+   - [ ] 实现错误检测函数
+   - [ ] API 错误响应解析
+
+2. **重试策略实现**
+   - [ ] 实现 `shouldRetry` 方法
+   - [ ] 指数退避算法
+   - [ ] Jitter 随机化
+   - [ ] 速率限制处理（429）
+   - [ ] 认证错误处理（401/403）
+
+3. **API 密钥刷新**
+   - [ ] 实现 `refreshAPIKey` 方法
+   - [ ] 重新解析配置获取新密钥
+   - [ ] 重建 HTTP 客户端
+
+#### 测试任务
+- [ ] 错误检测函数测试
+- [ ] 重试策略单元测试
+- [ ] 退避算法测试
+- [ ] API 密钥刷新测试
+
+#### 验收任务
+- [ ] 各种 HTTP 错误都能正确处理
+- [ ] 重试次数和延迟符合预期
+- [ ] API 密钥过期能自动恢复
+
+#### Git 提交
+```bash
+git commit -m "feat: implement robust error handling and retry mechanism
+
+- Add comprehensive HTTP error classification and detection
+- Implement exponential backoff retry with jitter
+- Support automatic API key refresh on auth errors
+- Handle rate limiting (429) and server errors (5xx)
+- Add extensive error handling tests and edge cases
+
+Addresses: US009"
+```
+
+---
+
+### Task 2.4: 调试和监控集成
+**需求编号**: US010  
+**预计时间**: 0.5 天
+
+#### 开发任务
+1. **结构化日志集成**
+   - [ ] 添加关键操作的 slog 日志
+   - [ ] 记录请求/响应摘要
+   - [ ] 记录重试和错误信息
+   - [ ] 性能指标记录
+
+2. **调试信息增强**
+   - [ ] HTTP 请求详细日志
+   - [ ] 流式事件追踪
+   - [ ] 错误上下文信息
+
+#### 测试任务
+- [ ] 日志输出验证测试
+- [ ] 调试模式功能测试
+
+#### 验收任务
+- [ ] 调试日志信息丰富且有用
+- [ ] 遵循项目日志规范
+
+#### Git 提交
+```bash
+git commit -m "feat: enhance debugging and monitoring capabilities
+
+- Add structured logging for key operations and errors
+- Implement performance metrics and retry tracking
+- Enhance HTTP request/response debugging information
+- Follow project logging conventions and standards
+
+Addresses: US010"
+```
+
+---
+
+## Milestone 3: 扩展功能实现
+
+### Task 3.1: 工具调用支持
+**需求编号**: US007  
+**预计时间**: 2 天
+
+#### 开发任务
+1. **工具定义转换**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_tools.go
+   ```
+   - [ ] 实现 `convertTools` 方法
+   - [ ] 转换工具定义到 Gemini 格式
+   - [ ] 处理参数 schema 转换
+   - [ ] 工具描述和验证
+
+2. **工具调用处理**
+   - [ ] 解析 `functionCall` 响应
+   - [ ] 转换为 Crush ToolCall 格式
+   - [ ] 实现 `convertToToolCall` 方法
+   - [ ] UUID 生成和 ID 管理
+
+3. **工具结果处理**
+   - [ ] 处理工具执行结果
+   - [ ] 构建 `functionResponse` 格式
+   - [ ] 往返调用支持
+
+#### 测试任务
+- [ ] 工具转换单元测试
+- [ ] 工具调用解析测试
+- [ ] 工具结果处理测试
+- [ ] 多工具场景测试
+
+#### 验收任务
+- [ ] 工具调用和结果处理正确
+- [ ] 多个工具同时调用支持
+- [ ] 与现有工具系统兼容
+
+#### Git 提交
+```bash
+git commit -m "feat: implement comprehensive tool calling support
+
+- Add Crush to Gemini tool definition conversion
+- Support function call parsing and execution
+- Implement function response handling
+- Add multi-tool scenario support and validation
+- Include extensive tool calling integration tests
+
+Addresses: US007"
+```
+
+---
+
+### Task 3.2: 图像支持实现
+**需求编号**: US008  
+**预计时间**: 1.5 天
+
+#### 开发任务
+1. **图像数据处理**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini.go (扩展)
+   ```
+   - [ ] 扩展消息转换支持图像
+   - [ ] Base64 编码处理
+   - [ ] MIME 类型检测和设置
+   - [ ] 图像大小验证
+
+2. **多模态消息构建**
+   - [ ] 文本和图像组合处理
+   - [ ] `inlineData` 格式构建
+   - [ ] 图像格式支持验证
+   - [ ] 内存优化处理
+
+#### 测试任务
+- [ ] 图像编码处理测试
+- [ ] 多模态消息转换测试
+- [ ] 图像大小限制测试
+- [ ] MIME 类型检测测试
+
+#### 验收任务
+- [ ] 支持常见图像格式
+- [ ] 文本和图像组合输入正常
+- [ ] 内存使用可控
+
+#### Git 提交
+```bash
+git commit -m "feat: add multimodal image support
+
+- Implement base64 image encoding and MIME type detection
+- Support text and image combination in messages
+- Add image size validation and memory optimization
+- Support common image formats (jpeg, png, gif, webp)
+- Include multimodal message conversion tests
+
+Addresses: US008"
+```
+
+---
+
+### Task 3.3: 配置验证增强
+**需求编号**: US011  
+**预计时间**: 1 天
+
+#### 开发任务
+1. **配置验证逻辑**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_config.go
+   ```
+   - [ ] 实现配置验证函数
+   - [ ] 必要字段存在性检查
+   - [ ] URL 格式验证
+   - [ ] API 密钥格式验证
+
+2. **错误信息优化**
+   - [ ] 详细的配置错误信息
+   - [ ] 修复建议提供
+   - [ ] 多语言错误支持准备
+
+#### 测试任务
+- [ ] 配置验证单元测试
+- [ ] 错误信息测试
+- [ ] 边界条件测试
+
+#### 验收任务
+- [ ] 配置错误有清晰提示
+- [ ] 验证逻辑全面
+- [ ] 错误信息有助于问题排查
+
+#### Git 提交
+```bash
+git commit -m "feat: enhance configuration validation and error reporting
+
+- Add comprehensive configuration validation
+- Implement detailed error messages with fix suggestions
+- Validate required fields and URL formats
+- Include configuration validation tests
+
+Addresses: US011"
+```
+
+---
+
+## 最终集成和测试
+
+### Task 4.1: 端到端集成测试
+**预计时间**: 1.5 天
+
+#### 开发任务
+1. **完整功能测试套件**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_integration_test.go
+   ```
+   - [ ] 两种 URL 模式完整测试
+   - [ ] 流式和非流式响应测试
+   - [ ] 工具调用完整流程测试
+   - [ ] 图像处理完整测试
+
+2. **性能和稳定性测试**
+   - [ ] 并发访问测试
+   - [ ] 长时间运行测试
+   - [ ] 内存泄漏检测
+   - [ ] 错误恢复测试
+
+#### 测试任务
+- [ ] 与真实 Gemini API 的集成测试
+- [ ] 性能基准测试
+- [ ] 稳定性测试
+- [ ] 与现有 `gemini` Provider 对比测试
+
+#### 验收任务
+- [ ] 所有功能正常工作
+- [ ] 性能达标（不超过现有实现的 120%）
+- [ ] 稳定性良好
+
+#### Git 提交
+```bash
+git commit -m "test: add comprehensive end-to-end integration tests
+
+- Add complete functionality tests for both URL modes
+- Include performance benchmarks and stability tests
+- Add memory leak detection and concurrent access tests
+- Compare with existing gemini provider implementation
+- Ensure all acceptance criteria are met
+
+Addresses: All user stories validation"
+```
+
+---
+
+### Task 4.2: 文档和示例
+**预计时间**: 1 天
+
+#### 开发任务
+1. **配置文档**
+   - [ ] 更新 README 或相关文档
+   - [ ] 两种 URL 模式配置示例
+   - [ ] 故障排除指南
+   - [ ] 迁移指南（从现有 gemini）
+
+2. **代码文档**
+   - [ ] API 文档注释完善
+   - [ ] 代码示例添加
+   - [ ] 架构说明文档
+
+#### 验收任务
+- [ ] 文档清晰易懂
+- [ ] 配置示例正确可用
+- [ ] 故障排除指南有用
+
+#### Git 提交
+```bash
+git commit -m "docs: add comprehensive documentation and examples
+
+- Add configuration examples for both URL modes
+- Include troubleshooting guide and migration instructions
+- Add API documentation and code examples
+- Update project documentation with custom-gemini info
+
+Addresses: Documentation requirements"
+```
+
+---
+
+### Task 4.3: 最终代码审查和优化
+**预计时间**: 0.5 天
+
+#### 开发任务
+1. **代码审查准备**
+   - [ ] 代码格式检查（gofumpt）
+   - [ ] 静态分析（golangci-lint）
+   - [ ] 测试覆盖率检查
+   - [ ] 性能分析
+
+2. **最终优化**
+   - [ ] 性能瓶颈优化
+   - [ ] 内存使用优化
+   - [ ] 错误处理完善
+
+#### 验收任务
+- [ ] 代码审查通过
+- [ ] 测试覆盖率 ≥ 85%
+- [ ] 性能指标达标
+
+#### Git 提交
+```bash
+git commit -m "refactor: final code review and optimization
+
+- Apply gofumpt formatting and fix linting issues
+- Optimize performance bottlenecks and memory usage
+- Achieve 85%+ test coverage
+- Complete final code review requirements
+
+Addresses: Code quality standards"
+```
+
+---
+
+## 提交和部署清单
+
+### 代码提交检查清单
+- [ ] 所有单元测试通过
+- [ ] 集成测试通过
+- [ ] 代码格式检查通过（`task fmt`）
+- [ ] 静态分析通过（`task lint`）
+- [ ] 测试覆盖率 ≥ 85%
+- [ ] 现有功能回归测试通过
+
+### 功能验收清单
+- [ ] P0 功能全部实现并验证
+- [ ] P1 功能全部实现并验证
+- [ ] P2 功能按优先级实现
+- [ ] 性能测试通过
+- [ ] 稳定性测试通过
+- [ ] 与现有 Provider 兼容性确认
+
+### 文档检查清单
+- [ ] 配置示例正确
+- [ ] 故障排除指南完整
+- [ ] API 文档完善
+- [ ] 代码注释完整
+
+### 最终部署准备
+- [ ] 功能标志准备（如需要）
+- [ ] 监控和报警配置
+- [ ] 回滚计划准备
+- [ ] 用户通知文档准备
+
+---
+
+## 风险缓解措施
+
+### 开发风险
+- **API 兼容性**: 建立 Mock 服务器进行离线测试
+- **性能问题**: 早期建立性能基准，持续监控
+- **复杂性管理**: 严格按里程碑推进，及时代码审查
+
+### 测试风险  
+- **测试覆盖**: 设定明确的覆盖率目标，自动化检查
+- **集成测试**: 准备测试环境和 API 密钥
+- **边界测试**: 重点测试错误处理和边界情况
+
+### 交付风险
+- **时间压力**: 合理评估任务时间，预留缓冲
+- **质量保证**: 每个里程碑都有明确的验收标准
+- **向后兼容**: 持续验证现有功能不受影响
