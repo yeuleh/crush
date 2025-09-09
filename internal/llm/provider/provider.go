@@ -188,6 +188,11 @@ func NewProvider(cfg config.ProviderConfig, opts ...ProviderClientOption) (Provi
 			options: clientOptions,
 			client:  newGeminiClient(clientOptions),
 		}, nil
+	case TypeCustomGemini:
+		return &baseProvider[CustomGeminiClient]{
+			options: clientOptions,
+			client:  newCustomGeminiClient(clientOptions),
+		}, nil
 	case catwalk.TypeBedrock:
 		return &baseProvider[BedrockClient]{
 			options: clientOptions,
