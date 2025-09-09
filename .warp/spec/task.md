@@ -1,68 +1,70 @@
 # Crush Custom-Gemini Provider 开发任务清单
 
-## 项目里程碑
+## 项目里程碑重新规划
 
-### Milestone 1: 核心功能实现 (P0)
-**预计时间**: 5-7 个工作日  
-**目标**: 实现基本的 `custom-gemini` Provider 功能，支持双模式 URL 和基础消息收发
+### 总体时间计划
+**总预计时间**: 15-18 个工作日（3 周）  
+**设计原则**: 优先实现功能，安全防护延后实现
 
-### Milestone 2: 高级功能实现 (P1) 
-**预计时间**: 4-5 个工作日  
-**目标**: 完善流式响应、错误处理和监控功能
+### Week 1: 核心功能实现 (5 天)
+**目标**: 实现基本的靐流式对话功能
 
-### Milestone 3: 扩展功能实现 (P2)
-**预计时间**: 4-6 个工作日  
-**目标**: 完成工具调用、图像支持等高级特性
+### Week 2: 流式功能与错误处理 (5 天)
+**目标**: 完成流式响应和健壮的错误处理
+
+### Week 3: 完善与扩展功能 (5 天)
+**目标**: 监控、扩展功能和安全防护
 
 ---
 
-## Milestone 1: 核心功能实现
+## Week 1: 核心功能实现详细任务
 
-### Task 1.1: Provider 类型系统扩展
+### Task 1.1: Provider 骨架搭建 (1 天)
 **需求编号**: US001  
-**预计时间**: 0.5 天
+**优先级**: P0
 
 #### 开发任务
-1. **扩展 Provider 类型定义**
+1. **Provider 类型注册和配置**
    ```bash
    # 文件路径: internal/llm/provider/provider.go
-   # 或者根据项目结构在适当位置添加
    ```
-   - [ ] 在 `NewProvider` 函数中添加 `custom-gemini` case
-   - [ ] 定义 `CustomGeminiClient` 接口类型
+   - [ ] 在 `NewProvider` 函数中添加 `"custom-gemini"` case
+   - [ ] 定义 `CustomGeminiClient` 接口类型  
    - [ ] 实现 `newCustomGeminiClient` 构造函数
+   - [ ] 初始化 HTTP 客户端和基础配置
 
-2. **配置类型验证**
-   - [ ] 确保配置解析支持 `custom-gemini` 类型
-   - [ ] 验证不影响现有 Provider 类型解析
+2. **基础 ProviderClient 接口实现**
+   - [ ] 实现 `send` 方法框架（返回 mock 响应）
+   - [ ] 实现 `stream` 方法框架（返回空 channel）
+   - [ ] 实现 `Model` 方法
 
 #### 测试任务
-- [ ] 编写 Provider 工厂函数单元测试
-- [ ] 验证配置解析兼容性测试
-- [ ] 确认现有 `gemini` Provider 不受影响
+- [ ] Provider 初始化测试
+- [ ] 配置解析测试
+- [ ] 与现有 Provider 的兼容性测试
 
-#### 验收任务
-- [ ] 配置文件中可成功定义 `custom-gemini` Provider
-- [ ] 现有 Provider 功能完全正常
-- [ ] 代码审查通过
+#### 验收标准
+- [ ] 配置中可以正确识别 `custom-gemini` 类型
+- [ ] Provider 可以成功初始化且不影响现有功能
+- [ ] 可以在 Crush TUI 中选择该 Provider（即使暂时无法工作）
 
 #### Git 提交
 ```bash
-git commit -m "feat: add custom-gemini provider type support
+git commit -m "feat(provider): add custom-gemini provider skeleton
 
-- Add CustomGeminiClient interface and constructor
-- Extend NewProvider factory to handle custom-gemini type
-- Maintain backward compatibility with existing providers
-- Add basic configuration validation
+- Add custom-gemini type registration in provider factory  
+- Implement basic ProviderClient interface methods
+- Add HTTP client initialization with debug support
+- Maintain compatibility with existing providers
 
 Addresses: US001"
 ```
 
 ---
 
-### Task 1.2: URL 解析器实现
+### Task 1.2: URL 解析器实现 (1 天)
 **需求编号**: US002  
-**预计时间**: 1 天
+**优先级**: P0
 
 #### 开发任务
 1. **创建 URL 解析器组件**
@@ -78,7 +80,7 @@ Addresses: US001"
    - [ ] 检测 base_url 是否以 "#" 结尾
    - [ ] 标准模式：路径拼接逻辑
    - [ ] 完整模式：直接使用去除 "#" 的 URL
-   - [ ] URL 格式验证和错误处理
+   - [ ] 基础 URL 格式验证（无安全检查，内部使用）
 
 #### 测试任务
 - [ ] 编写 URL 解析器单元测试
@@ -708,6 +710,57 @@ git commit -m "refactor: final code review and optimization
 - Complete final code review requirements
 
 Addresses: Code quality standards"
+```
+
+---
+
+### Task 4.4: 安全防护实现 (1 天) - 后续需求
+**需求编号**: US012  
+**优先级**: P2
+
+#### 开发任务
+1. **SSRF 防护机制**
+   ```bash
+   # 文件路径: internal/llm/provider/custom_gemini_security.go
+   ```
+   - [ ] 实现 URL 主机名验证
+   - [ ] 添加私网 IP 段检查
+   - [ ] 实现协议限制（仅 http/https）
+   - [ ] URL 白名单配置支持
+
+2. **安全审计日志**
+   - [ ] 记录 URL 访问请求
+   - [ ] 记录安全检查结果
+   - [ ] 安全事件告警
+
+3. **安全配置选项**
+   - [ ] 安全模式开关
+   - [ ] URL 白名单配置
+   - [ ] 安全策略动态调整
+
+#### 测试任务
+- [ ] SSRF 攻击模拟测试
+- [ ] 私网 IP 访问拦截测试
+- [ ] 白名单功能测试
+- [ ] 安全审计日志测试
+
+#### 验收标准
+- [ ] 通过安全渗透测试
+- [ ] SSRF 攻击得到有效防护
+- [ ] 安全日志完整可追溯
+- [ ] 可在生产环境中安全使用
+
+#### Git 提交
+```bash
+git commit -m "feat(security): implement SSRF protection for complete URL mode
+
+- Add URL hostname validation and private IP blocking
+- Implement protocol restrictions (http/https only)
+- Add security audit logging
+- Support URL whitelist configuration
+- Add comprehensive security tests
+
+Addresses: US012"
 ```
 
 ---

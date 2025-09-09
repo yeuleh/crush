@@ -1,5 +1,15 @@
 # Crush Custom-Gemini Provider 设计文档
 
+## 项目背景
+
+### 使用场景
+本 Provider 主要面向内部使用场景，提供对 Gemini API 的灵活访问能力。支持标准 API 端点和自定义代理端点，以满足不同部署环境的需求。
+
+### 设计原则
+- **功能优先**: 优先实现核心对话功能，安全防护作为后续需求
+- **渐进增强**: 采用小步迭代，每个里程碑都可独立交付
+- **测试友好**: 设计时充分考虑内部测试环境的便利性
+
 ## 架构概览
 
 ### 整体架构
@@ -92,7 +102,7 @@ func newURLResolver(baseURL string) (*urlResolver, error) {
         resolver.mode = urlModeStandard
     }
     
-    // 验证 URL 格式
+    // 验证 URL 格式（基础验证，安全检查将在后续里程碑中添加）
     if _, err := url.Parse(resolver.baseURL); err != nil {
         return nil, fmt.Errorf("invalid base URL: %w", err)
     }
