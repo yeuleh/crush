@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -16,6 +17,7 @@ import (
 type customGeminiClient struct {
 	providerOptions providerClientOptions
 	httpClient      *http.Client
+	baseURL         string
 }
 
 type CustomGeminiClient ProviderClient
@@ -26,6 +28,7 @@ func newCustomGeminiClient(opts providerClientOptions) CustomGeminiClient {
 	return &customGeminiClient{
 		providerOptions: opts,
 		httpClient:      httpClient,
+		baseURL:         opts.baseURL,
 	}
 }
 
@@ -35,21 +38,35 @@ func createCustomGeminiHTTPClient(opts providerClientOptions) *http.Client {
 		return log.NewHTTPClient()
 	}
 
-	// Standard HTTP client configuration
+	// Standard HTTP client configuration optimized for Gemini API
 	return &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: 120 * time.Second, // Longer timeout for streaming responses
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
 }
 
 // send implements the ProviderClient interface for non-streaming requests
 func (c *customGeminiClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
+	// Build request URL using URL resolver
+	methodPath := c.buildGeminiMethodPath(c.getModelName(), "generateContent")
+	requestURL, err := c.buildRequestURL(methodPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request URL: %w", err)
+	}
+
 	// TODO: Implement actual Gemini API call in later tasks
-	slog.Info("Custom Gemini provider send called (stub)", "messages_count", len(messages), "tools_count", len(tools))
+	slog.Info("Custom Gemini provider send called",
+		"messages_count", len(messages),
+		"tools_count", len(tools),
+		"request_url", requestURL,
+		"model", c.getModelName())
 
 	// Return a minimal mock response for now
 	return &ProviderResponse{
@@ -62,13 +79,26 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 
 // stream implements the ProviderClient interface for streaming requests
 func (c *customGeminiClient) stream(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
-	// TODO: Implement actual streaming in later tasks
 	eventChan := make(chan ProviderEvent)
 
 	go func() {
 		defer close(eventChan)
 
-		slog.Info("Custom Gemini provider stream called (stub)", "messages_count", len(messages), "tools_count", len(tools))
+		// Build request URL using URL resolver
+		methodPath := c.buildGeminiMethodPath(c.getModelName(), "streamGenerateContent")
+		requestURL, err := c.buildRequestURL(methodPath)
+		if err != nil {
+			slog.Error("Failed to build streaming request URL", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build request URL: %w", err)}
+			return
+		}
+
+		// TODO: Implement actual streaming in later tasks
+		slog.Info("Custom Gemini provider stream called",
+			"messages_count", len(messages),
+			"tools_count", len(tools),
+			"request_url", requestURL,
+			"model", c.getModelName())
 
 		// Send minimal mock events
 		eventChan <- ProviderEvent{Type: EventContentStart}
@@ -94,4 +124,19 @@ func (c *customGeminiClient) stream(ctx context.Context, messages []message.Mess
 // Model implements the ProviderClient interface
 func (c *customGeminiClient) Model() catwalk.Model {
 	return c.providerOptions.model(c.providerOptions.modelType)
+}
+
+// buildRequestURL constructs the full request URL for a given Gemini API method
+func (c *customGeminiClient) buildRequestURL(methodPath string) (string, error) {
+	return ResolveGeminiURL(c.baseURL, methodPath)
+}
+
+// buildGeminiMethodPath constructs the method path for Gemini API endpoints
+func (c *customGeminiClient) buildGeminiMethodPath(model, operation string) string {
+	return fmt.Sprintf("v1beta/models/%s:%s", model, operation)
+}
+
+// getModelName extracts the model name from the provider options
+func (c *customGeminiClient) getModelName() string {
+	return c.Model().ID
 }
