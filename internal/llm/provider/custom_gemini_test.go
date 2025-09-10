@@ -111,7 +111,7 @@ func TestCustomGeminiClient_Send(t *testing.T) {
 			tools := []tools.BaseTool{}
 
 			response, err := client.send(ctx, messages, tools)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, response)
@@ -231,7 +231,7 @@ func TestNewProvider_CustomGemini(t *testing.T) {
 // Compatibility test to ensure existing providers still work
 func TestNewProvider_ExistingProviders_StillWork(t *testing.T) {
 	tests := []struct {
-		name string
+		name         string
 		providerType catwalk.Type
 	}{
 		{"OpenAI provider", catwalk.TypeOpenAI},
@@ -305,10 +305,10 @@ func TestCreateCustomGeminiHTTPClient(t *testing.T) {
 				ExpectContinueTimeout: 1 * time.Second,
 			},
 		}
-		
+
 		// Verify timeout configuration
 		assert.Equal(t, 120*time.Second, client.Timeout)
-		
+
 		// Verify transport configuration
 		transport, ok := client.Transport.(*http.Transport)
 		require.True(t, ok)
@@ -365,9 +365,9 @@ func TestCustomGeminiClient_BuildRequestURL(t *testing.T) {
 			}
 
 			client := newCustomGeminiClient(opts).(*customGeminiClient)
-			
+
 			actualURL, err := client.buildRequestURL(tt.methodPath)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Empty(t, actualURL)
@@ -438,7 +438,7 @@ func TestCustomGeminiClient_GetModelName(t *testing.T) {
 	}
 
 	client := newCustomGeminiClient(opts).(*customGeminiClient)
-	
+
 	modelName := client.getModelName()
 	assert.Equal(t, "gemini-pro", modelName)
 }

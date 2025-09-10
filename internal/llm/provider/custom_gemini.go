@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -139,4 +141,244 @@ func (c *customGeminiClient) buildGeminiMethodPath(model, operation string) stri
 // getModelName extracts the model name from the provider options
 func (c *customGeminiClient) getModelName() string {
 	return c.Model().ID
+}
+
+// convertMessages converts Crush messages to Gemini API format
+func (c *customGeminiClient) convertMessages(messages []message.Message, tools []tools.BaseTool) (*geminiRequest, error) {
+	request := &geminiRequest{
+		Contents: make([]geminiContent, 0),
+	}
+
+	// Handle system message
+	systemMessage := c.providerOptions.systemMessage
+	if c.providerOptions.systemPromptPrefix != "" {
+		systemMessage = c.providerOptions.systemPromptPrefix + "\n" + systemMessage
+	}
+
+	if systemMessage != "" {
+		request.SystemInstruction = &geminiContent{
+			Role:  "user", // Gemini uses "user" role for system instructions
+			Parts: []geminiPart{{Text: systemMessage}},
+		}
+	}
+
+	// Convert conversation messages
+	for _, msg := range messages {
+		content := c.convertMessage(msg)
+		if content != nil {
+			request.Contents = append(request.Contents, *content)
+		}
+	}
+
+	// Convert tools if provided
+	if len(tools) > 0 {
+		geminiTools := c.convertTools(tools)
+		request.Tools = geminiTools
+	}
+
+	// Set generation config if needed
+	if c.providerOptions.maxTokens > 0 {
+		request.GenerationConfig = &generationConfig{
+			MaxOutputTokens: int(c.providerOptions.maxTokens),
+		}
+	}
+
+	return request, nil
+}
+
+// convertMessage converts a single Crush message to Gemini content format
+func (c *customGeminiClient) convertMessage(msg message.Message) *geminiContent {
+	switch msg.Role {
+	case message.User:
+		return c.convertUserMessage(msg)
+	case message.Assistant:
+		return c.convertAssistantMessage(msg)
+	case message.System:
+		return c.convertSystemMessage(msg)
+	case message.Tool:
+		return c.convertToolMessage(msg)
+	default:
+		return nil
+	}
+}
+
+// convertSystemMessage converts a system message to Gemini format
+// In Gemini, system messages are typically handled as user messages in the conversation
+func (c *customGeminiClient) convertSystemMessage(msg message.Message) *geminiContent {
+	// Convert system message as user message since Gemini doesn't have a separate system role in conversation
+	content := c.convertUserMessage(msg)
+	if content != nil {
+		content.Role = "user"
+	}
+	return content
+}
+
+// convertUserMessage converts a user message to Gemini format
+func (c *customGeminiClient) convertUserMessage(msg message.Message) *geminiContent {
+	content := &geminiContent{
+		Role:  "user",
+		Parts: make([]geminiPart, 0),
+	}
+
+	// Process all parts in order to maintain the original structure
+	for _, part := range msg.Parts {
+		switch p := part.(type) {
+		case message.TextContent:
+			if p.Text != "" {
+				content.Parts = append(content.Parts, geminiPart{
+					Text: p.Text,
+				})
+			}
+		case message.BinaryContent:
+			content.Parts = append(content.Parts, geminiPart{
+				InlineData: &geminiInlineData{
+					MimeType: p.MIMEType,
+					Data:     p.String(catwalk.InferenceProviderGemini),
+				},
+			})
+		case message.ImageURLContent:
+			// For Gemini, we need to convert image URLs to inline data
+			// For now, we'll add as text content with a note
+			// In a full implementation, we'd fetch and convert the image
+			content.Parts = append(content.Parts, geminiPart{
+				Text: fmt.Sprintf("[Image URL: %s]", p.URL),
+			})
+		case message.ReasoningContent:
+			// Add reasoning content as text
+			if p.Thinking != "" {
+				content.Parts = append(content.Parts, geminiPart{
+					Text: fmt.Sprintf("[Thinking: %s]", p.Thinking),
+				})
+			}
+		case message.ToolResult:
+			content.Parts = append(content.Parts, geminiPart{
+				FunctionResponse: &geminiFunctionResponse{
+					Name: p.Name,
+					Response: map[string]interface{}{
+						"content":  p.Content,
+						"metadata": p.Metadata,
+						"is_error": p.IsError,
+					},
+				},
+			})
+		case message.Finish:
+			// Finish parts are typically not included in the request content
+			// They're used for response processing
+			continue
+		}
+	}
+
+	return content
+}
+
+// convertAssistantMessage converts an assistant message to Gemini format
+func (c *customGeminiClient) convertAssistantMessage(msg message.Message) *geminiContent {
+	content := &geminiContent{
+		Role:  "model", // Gemini uses "model" for assistant messages
+		Parts: make([]geminiPart, 0),
+	}
+
+	// Process all parts in order to maintain the original structure
+	for _, part := range msg.Parts {
+		switch p := part.(type) {
+		case message.TextContent:
+			if p.Text != "" {
+				content.Parts = append(content.Parts, geminiPart{
+					Text: p.Text,
+				})
+			}
+		case message.ReasoningContent:
+			// Add reasoning content as text
+			if p.Thinking != "" {
+				content.Parts = append(content.Parts, geminiPart{
+					Text: fmt.Sprintf("[Thinking: %s]", p.Thinking),
+				})
+			}
+		case message.ToolCall:
+			// Parse tool call input as JSON for args
+			var args map[string]interface{}
+			if err := json.Unmarshal([]byte(p.Input), &args); err != nil {
+				// If parsing fails, use the input as a single string argument
+				args = map[string]interface{}{
+					"input": p.Input,
+				}
+			}
+
+			content.Parts = append(content.Parts, geminiPart{
+				FunctionCall: &geminiFunctionCall{
+					Name: p.Name,
+					Args: args,
+				},
+			})
+		case message.Finish:
+			// Finish parts are typically not included in the request content
+			// They're used for response processing
+			continue
+		}
+	}
+
+	return content
+}
+
+// convertToolMessage converts a tool message to Gemini format
+func (c *customGeminiClient) convertToolMessage(msg message.Message) *geminiContent {
+	// Tool messages are typically handled as part of user messages in Gemini
+	// This is a fallback that treats tool messages as user messages
+	content := c.convertUserMessage(msg)
+	if content != nil {
+		content.Role = "user"
+	}
+	return content
+}
+
+// convertTools converts Crush tools to Gemini tool format
+func (c *customGeminiClient) convertTools(tools []tools.BaseTool) []geminiTool {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	functionDeclarations := make([]geminiFunctionDeclaration, 0, len(tools))
+
+	for _, tool := range tools {
+		info := tool.Info()
+		functionDeclarations = append(functionDeclarations, geminiFunctionDeclaration{
+			Name:        info.Name,
+			Description: info.Description,
+			Parameters:  info.Parameters,
+		})
+	}
+
+	return []geminiTool{
+		{
+			FunctionDeclarations: functionDeclarations,
+		},
+	}
+}
+
+// buildHTTPRequest creates an HTTP request for the Gemini API
+func (c *customGeminiClient) buildHTTPRequest(ctx context.Context, method, url string, request *geminiRequest) (*http.Request, error) {
+	// Serialize request body
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set required headers
+	req.Header.Set("Content-Type", "application/json")
+
+	// Set authorization header
+	if c.providerOptions.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.providerOptions.apiKey)
+	}
+
+	// Set user agent
+	req.Header.Set("User-Agent", "Crush/1.0")
+
+	return req, nil
 }
