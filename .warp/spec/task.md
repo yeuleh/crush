@@ -6,7 +6,7 @@
 **完成时间**: 2025-09-09  
 **Git Commits**: 
 - `16461b74` (feat: add Custom-Gemini provider skeleton - Task 1.1)
-- `待提交` (feat: implement dual-mode URL resolver - Task 1.2)  
+- `4ce08893` (feat: implement dual-mode URL resolver - Task 1.2)
 **下一步**: Task 1.3 - HTTP 客户端基础结构
 
 ### 完成情况统计
@@ -121,7 +121,7 @@ Next: Task 1.2 (URL 解析器实现)"
 **需求编号**: US002  
 **优先级**: P0  
 **完成时间**: 2025-09-09  
-**待提交**: gemini_url_resolver.go + 测试文件 + 文档
+**Git Commit**: `4ce08893` - feat(provider): implement dual-mode URL resolver for custom-gemini (Task 1.2)
 
 #### 开发任务 ✅ **全部完成**
 1. **创建 URL 解析器组件** ✅
@@ -178,12 +178,10 @@ Next: Task 1.2 (URL 解析器实现)"
 - **全面测试**: 766 行测试代码，覆盖所有关键路径和边界情况
 - **高质量文档**: 完整的用户指南和配置示例
 
-#### 待 Git 提交
+#### Git 提交 ✅ **已完成**
 ```bash
-git add internal/llm/provider/gemini_url_resolver.go
-git add internal/llm/provider/gemini_url_resolver_test.go  
-git add internal/llm/provider/README_CUSTOM_GEMINI.md
-git commit -m "feat(provider): implement dual-mode URL resolver for custom-gemini (Task 1.2)
+# 实际提交记录:
+git commit 4ce08893 -m "feat(provider): implement dual-mode URL resolver for custom-gemini (Task 1.2)
 
 - Add comprehensive URLMode detection (Standard vs Complete URL modes)
 - Implement ResolveGeminiURL with intelligent path joining and query handling
@@ -214,7 +212,8 @@ Next: Task 1.3 (HTTP 客户端基础结构)
 Files:
 - internal/llm/provider/gemini_url_resolver.go (255 lines)
 - internal/llm/provider/gemini_url_resolver_test.go (766 lines) 
-- internal/llm/provider/README_CUSTOM_GEMINI.md (128 lines)"
+- internal/llm/provider/README_CUSTOM_GEMINI.md (128 lines)
+- .warp/spec/task.md (updated with Task 1.2 completion status)"
 ```
 
 ---
