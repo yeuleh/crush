@@ -162,7 +162,21 @@ func (c *customGeminiClient) Model() catwalk.Model {
 
 // buildRequestURL constructs the full request URL for a given Gemini API method
 func (c *customGeminiClient) buildRequestURL(methodPath string) (string, error) {
-	return ResolveGeminiURL(c.baseURL, methodPath)
+	baseURL, err := ResolveGeminiURL(c.baseURL, methodPath)
+	if err != nil {
+		return "", err
+	}
+	
+	// Add API key as query parameter for Gemini API
+	if c.providerOptions.apiKey != "" {
+		separator := "?"
+		if strings.Contains(baseURL, "?") {
+			separator = "&"
+		}
+		baseURL += separator + "key=" + c.providerOptions.apiKey
+	}
+	
+	return baseURL, nil
 }
 
 // buildGeminiMethodPath constructs the method path for Gemini API endpoints
@@ -404,13 +418,10 @@ func (c *customGeminiClient) buildHTTPRequest(ctx context.Context, method, url s
 	// Set required headers
 	req.Header.Set("Content-Type", "application/json")
 
-	// Set authorization header
-	if c.providerOptions.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.providerOptions.apiKey)
-	}
-
 	// Set user agent
 	req.Header.Set("User-Agent", "Crush/1.0")
+	
+	// Note: API key is added as query parameter in buildRequestURL, not as Authorization header
 
 	return req, nil
 }

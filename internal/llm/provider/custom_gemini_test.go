@@ -328,14 +328,14 @@ func TestCustomGeminiClient_BuildRequestURL(t *testing.T) {
 			name:        "standard mode URL building",
 			baseURL:     "https://api.example.com",
 			methodPath:  "v1beta/models/gemini-pro:generateContent",
-			expectedURL: "https://api.example.com/v1beta/models/gemini-pro:generateContent",
+			expectedURL: "https://api.example.com/v1beta/models/gemini-pro:generateContent?key=test-key",
 			expectError: false,
 		},
 		{
 			name:        "complete URL mode",
 			baseURL:     "https://api.example.com/complete-endpoint#",
 			methodPath:  "ignored",
-			expectedURL: "https://api.example.com/complete-endpoint",
+			expectedURL: "https://api.example.com/complete-endpoint?key=test-key",
 			expectError: false,
 		},
 		{
