@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/catwalk/pkg/catwalk"
@@ -63,20 +64,51 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 		return nil, fmt.Errorf("failed to build request URL: %w", err)
 	}
 
-	// TODO: Implement actual Gemini API call in later tasks
-	slog.Info("Custom Gemini provider send called",
+	// Convert messages to Gemini format
+	request, err := c.convertMessages(messages, tools)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert messages: %w", err)
+	}
+
+	// Build HTTP request
+	httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build HTTP request: %w", err)
+	}
+
+	// Execute HTTP request
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check HTTP status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleHTTPError(resp)
+	}
+
+	// Read response body
+	var responseBody bytes.Buffer
+	if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Parse response
+	response, err := c.parseResponse(responseBody.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	slog.Info("Custom Gemini provider send completed",
 		"messages_count", len(messages),
 		"tools_count", len(tools),
 		"request_url", requestURL,
-		"model", c.getModelName())
+		"model", c.getModelName(),
+		"response_length", len(response.Content),
+		"tool_calls_count", len(response.ToolCalls))
 
-	// Return a minimal mock response for now
-	return &ProviderResponse{
-		Content:      "Custom Gemini provider response (stub)",
-		ToolCalls:    []message.ToolCall{},
-		Usage:        TokenUsage{},
-		FinishReason: message.FinishReasonEndTurn,
-	}, nil
+	return response, nil
 }
 
 // stream implements the ProviderClient interface for streaming requests
@@ -381,4 +413,138 @@ func (c *customGeminiClient) buildHTTPRequest(ctx context.Context, method, url s
 	req.Header.Set("User-Agent", "Crush/1.0")
 
 	return req, nil
+}
+
+// parseResponse parses a Gemini API response and converts it to ProviderResponse format
+func (c *customGeminiClient) parseResponse(body []byte) (*ProviderResponse, error) {
+	var response geminiResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if len(response.Candidates) == 0 {
+		return nil, fmt.Errorf("no candidates in response")
+	}
+
+	// Validate response structure
+	if err := response.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid response structure: %w", err)
+	}
+
+	// Use the first candidate
+	candidate := response.Candidates[0]
+	
+	// Extract content and tool calls from the candidate
+	content, toolCalls := c.extractContentAndToolCalls(candidate.Content)
+
+	// Convert usage metadata
+	usage := c.convertUsage(response.UsageMetadata)
+
+	// Convert finish reason
+	finishReason := c.convertFinishReason(candidate.FinishReason)
+
+	return &ProviderResponse{
+		Content:      content,
+		ToolCalls:    toolCalls,
+		Usage:        usage,
+		FinishReason: finishReason,
+	}, nil
+}
+
+// extractContentAndToolCalls extracts text content and tool calls from geminiContent
+func (c *customGeminiClient) extractContentAndToolCalls(content geminiContent) (string, []message.ToolCall) {
+	var textContent strings.Builder
+	var toolCalls []message.ToolCall
+
+	for _, part := range content.Parts {
+		if part.Text != "" {
+			textContent.WriteString(part.Text)
+		}
+		
+		if part.FunctionCall != nil {
+			toolCall := c.convertToToolCall(part.FunctionCall)
+			toolCalls = append(toolCalls, toolCall)
+		}
+	}
+
+	return textContent.String(), toolCalls
+}
+
+// convertToToolCall converts a Gemini function call to Crush ToolCall format
+func (c *customGeminiClient) convertToToolCall(functionCall *geminiFunctionCall) message.ToolCall {
+	// Convert args to JSON string
+	inputBytes, err := json.Marshal(functionCall.Args)
+	if err != nil {
+		// Fallback to empty object if marshaling fails
+		inputBytes = []byte("{}")
+	}
+
+	return message.ToolCall{
+		ID:       generateToolCallID(), // Generate a unique ID
+		Name:     functionCall.Name,
+		Input:    string(inputBytes),
+		Type:     "function",
+		Finished: false, // Will be set to true when the tool result is received
+	}
+}
+
+// convertUsage converts Gemini usage metadata to TokenUsage format
+func (c *customGeminiClient) convertUsage(usage *geminiUsage) TokenUsage {
+	if usage == nil {
+		return TokenUsage{}
+	}
+
+	return TokenUsage{
+		InputTokens:         int64(usage.PromptTokenCount),
+		OutputTokens:        int64(usage.CandidatesTokenCount),
+		CacheCreationTokens: int64(usage.CachedContentTokenCount),
+		CacheReadTokens:     0, // Gemini doesn't provide separate cache read tokens
+	}
+}
+
+// convertFinishReason converts Gemini finish reason to Crush FinishReason
+func (c *customGeminiClient) convertFinishReason(reason string) message.FinishReason {
+	switch reason {
+	case "STOP":
+		return message.FinishReasonEndTurn
+	case "MAX_TOKENS":
+		return message.FinishReasonMaxTokens
+	case "SAFETY":
+		return message.FinishReasonPermissionDenied
+	case "RECITATION":
+		return message.FinishReasonPermissionDenied
+	case "OTHER":
+		return message.FinishReasonError
+	case "":
+		// Empty finish reason in streaming responses
+		return message.FinishReasonEndTurn
+	default:
+		slog.Warn("Unknown Gemini finish reason", "reason", reason)
+		return message.FinishReasonUnknown
+	}
+}
+
+// generateToolCallID generates a unique ID for tool calls
+func generateToolCallID() string {
+	// Simple implementation using timestamp and random suffix
+	// In a production system, you might want to use UUID
+	return fmt.Sprintf("call_%d", time.Now().UnixNano())
+}
+
+// handleHTTPError handles HTTP error responses from the Gemini API
+func (c *customGeminiClient) handleHTTPError(resp *http.Response) error {
+	var responseBody bytes.Buffer
+	if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+		return fmt.Errorf("HTTP %d: failed to read error response body: %w", resp.StatusCode, err)
+	}
+
+	// Try to parse as Gemini error response
+	var errorResp geminiErrorResponse
+	if err := json.Unmarshal(responseBody.Bytes(), &errorResp); err == nil {
+		return fmt.Errorf("Gemini API error (HTTP %d): %s - %s", 
+			resp.StatusCode, errorResp.Error.Status, errorResp.Error.Message)
+	}
+
+	// Fallback to generic HTTP error
+	return fmt.Errorf("HTTP %d: %s - %s", resp.StatusCode, resp.Status, responseBody.String())
 }

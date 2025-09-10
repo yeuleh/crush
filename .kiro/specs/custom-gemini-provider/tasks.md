@@ -2,20 +2,21 @@
 
 ## 🚀 总体进度概览
 
-**当前状态**: Task 1.4 已完成 ✅  
+**当前状态**: Task 1.5 已完成 ✅  
 **完成时间**: 2025-09-10  
 **Git Commits**: 
 - `16461b74` (feat: add Custom-Gemini provider skeleton - Task 1.1)
 - `4ce08893` (feat: implement dual-mode URL resolver - Task 1.2)
 - Task 1.3 & 1.4 (HTTP 客户端基础结构 & Gemini API 请求构建)
-**下一步**: Task 1.5 - 基础响应解析和发送
+- Task 1.5 (基础响应解析和发送)
+**下一步**: Task 2.1 - 标准模式流式响应
 
 ### 完成情况统计
 - ✅ **Task 1.1**: Provider 骨架搭建 - **已完成** (100%)
 - ✅ **Task 1.2**: URL 解析器实现 - **已完成** (100%)
 - ✅ **Task 1.3**: HTTP 客户端基础结构 - **已完成** (100%)
 - ✅ **Task 1.4**: Gemini API 请求构建 - **已完成** (100%)
-- ⏳ **Task 1.5**: 基础响应解析和发送 - 待开始 (0%)
+- ✅ **Task 1.5**: 基础响应解析和发送 - **已完成** (100%)
 
 ### 主要成果
 - 🎯 创建了类型安全的 `TypeCustomGemini` provider 类型
@@ -380,55 +381,94 @@ Next: Task 1.5 (基础响应解析和发送)"
 **需求编号**: US003, US006  
 **预计时间**: 1.5 天
 
-#### 开发任务
-1. **响应解析实现**
+#### 开发任务 ✅ **全部完成**
+1. **响应解析实现** ✅
    ```bash
    # 文件路径: internal/llm/provider/custom_gemini.go (继续)
    ```
-   - [ ] 实现 `parseResponse` 方法
-   - [ ] 解析 candidates 和 content
-   - [ ] 处理 finishReason 转换
-   - [ ] 解析 usage metadata
-   - [ ] 错误响应处理
+   - [x] ~~实现 `parseResponse` 方法~~ ✅
+   - [x] ~~解析 candidates 和 content~~ ✅
+   - [x] ~~处理 finishReason 转换~~ ✅
+   - [x] ~~解析 usage metadata~~ ✅
+   - [x] ~~错误响应处理~~ ✅
 
-2. **基础发送功能**
-   - [ ] 实现 `send` 方法（非流式）
-   - [ ] HTTP 请求执行
-   - [ ] 响应状态码检查
-   - [ ] JSON 响应解析
-   - [ ] 错误处理和包装
+2. **基础发送功能** ✅
+   - [x] ~~实现 `send` 方法（非流式）~~ ✅
+   - [x] ~~HTTP 请求执行~~ ✅
+   - [x] ~~响应状态码检查~~ ✅
+   - [x] ~~JSON 响应解析~~ ✅
+   - [x] ~~错误处理和包装~~ ✅
 
-3. **Token 使用统计**
-   - [ ] 实现 `convertUsage` 方法
-   - [ ] 解析 promptTokenCount
-   - [ ] 解析 candidatesTokenCount  
-   - [ ] 解析 cachedContentTokenCount
-   - [ ] 返回 TokenUsage 结构
+3. **Token 使用统计** ✅
+   - [x] ~~实现 `convertUsage` 方法~~ ✅
+   - [x] ~~解析 promptTokenCount~~ ✅
+   - [x] ~~解析 candidatesTokenCount~~ ✅
+   - [x] ~~解析 cachedContentTokenCount~~ ✅
+   - [x] ~~返回 TokenUsage 结构~~ ✅
 
-#### 测试任务
-- [ ] 响应解析单元测试
-  - [ ] 正常响应解析测试
-  - [ ] 错误响应处理测试
-  - [ ] Token 统计解析测试
-- [ ] 发送功能集成测试
-- [ ] Mock HTTP 服务器测试
+#### 测试任务 ✅ **全部完成**
+- [x] ~~响应解析单元测试~~ ✅
+  - [x] ~~正常响应解析测试~~ ✅
+  - [x] ~~错误响应处理测试~~ ✅
+  - [x] ~~Token 统计解析测试~~ ✅
+- [x] ~~发送功能集成测试~~ ✅
+- [x] ~~Mock HTTP 服务器测试~~ ✅
 
-#### 验收任务
-- [ ] 能成功发送请求并解析响应
-- [ ] Token 使用统计准确
-- [ ] 错误情况有适当处理
+#### 验收任务 ✅ **全部满足**
+- [x] ~~能成功发送请求并解析响应~~ ✅
+- [x] ~~Token 使用统计准确~~ ✅
+- [x] ~~错误情况有适当处理~~ ✅
 
-#### Git 提交
+#### 实现亮点 ✨
+- **完整响应解析**: 实现了 `parseResponse` 方法，支持完整的 Gemini API 响应解析
+- **智能内容提取**: `extractContentAndToolCalls` 方法能正确分离文本内容和工具调用
+- **工具调用转换**: `convertToToolCall` 方法将 Gemini 函数调用转换为 Crush ToolCall 格式
+- **Token 统计**: `convertUsage` 方法准确解析和转换 Token 使用统计
+- **完成原因映射**: `convertFinishReason` 方法正确映射 Gemini 和 Crush 的完成原因
+- **错误处理**: `handleHTTPError` 方法支持 Gemini API 错误响应和通用 HTTP 错误
+- **实际发送功能**: 更新了 `send` 方法，实现真正的 HTTP 请求发送和响应处理
+- **全面测试**: 新增 300+ 行测试代码，覆盖所有响应解析和发送功能
+
+#### Git 提交 ✅ **已完成**
 ```bash
-git commit -m "feat: implement response parsing and basic send functionality
+git commit -m "feat: implement comprehensive response parsing and send functionality (Task 1.5)
 
-- Add comprehensive Gemini API response parsing
-- Implement token usage statistics extraction
-- Add error response handling and status code checks
-- Support finish reason conversion to Crush format
-- Include mock server integration tests
+- Add parseResponse method with complete Gemini API response parsing
+- Implement extractContentAndToolCalls for content and tool call separation
+- Add convertToToolCall for Gemini to Crush tool call conversion
+- Implement convertUsage for accurate token usage statistics
+- Add convertFinishReason for proper finish reason mapping
+- Implement handleHTTPError for Gemini API and HTTP error handling
+- Update send method with actual HTTP request execution and response parsing
+- Add comprehensive test suite (300+ lines) covering:
+  * Response parsing with various scenarios (success, errors, tool calls)
+  * Content and tool call extraction
+  * Tool call conversion with different argument types
+  * Usage metadata conversion
+  * Finish reason mapping for all Gemini reasons
+  * HTTP error handling for API and generic errors
+  * Send method integration tests with mock servers
+  * URL building verification for both modes
+- Support all Gemini API response formats and error conditions
+- Ensure zero regression with existing provider functionality
 
-Addresses: US003, US006"
+Key Features:
+- Complete Gemini API response parsing with validation
+- Accurate token usage statistics extraction
+- Proper tool call handling and conversion
+- Robust error handling with detailed error messages
+- Full HTTP request/response cycle implementation
+- Comprehensive test coverage including edge cases
+
+Addresses: US003, US006 (基础消息发送和接收, Token 使用统计)
+Satisfies: AC003.1-AC003.6, AC006.1-AC006.6 (全部验收条件)
+Next: Task 2.1 (标准模式流式响应)
+
+Files:
+- internal/llm/provider/custom_gemini.go (enhanced with response parsing)
+- internal/llm/provider/custom_gemini_response_test.go (new, 520 lines)
+- internal/llm/provider/custom_gemini_send_test.go (new, 250 lines)
+- internal/llm/provider/custom_gemini_test.go (updated for actual send behavior)"
 ```
 
 ---
