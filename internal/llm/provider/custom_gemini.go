@@ -113,46 +113,40 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 
 // stream implements the ProviderClient interface for streaming requests
 func (c *customGeminiClient) stream(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
-	eventChan := make(chan ProviderEvent)
+	// Detect URL mode to choose streaming strategy
+	mode, _, err := DetectURLMode(c.baseURL)
+	if err != nil {
+		eventChan := make(chan ProviderEvent)
+		go func() {
+			defer close(eventChan)
+			slog.Error("Failed to detect URL mode for streaming", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to detect URL mode: %w", err)}
+		}()
+		return eventChan
+	}
 
-	go func() {
-		defer close(eventChan)
+	slog.Info("Custom Gemini provider stream called",
+		"messages_count", len(messages),
+		"tools_count", len(tools),
+		"model", c.getModelName(),
+		"url_mode", mode)
 
-		// Build request URL using URL resolver
-		methodPath := c.buildGeminiMethodPath(c.getModelName(), "streamGenerateContent")
-		requestURL, err := c.buildRequestURL(methodPath)
-		if err != nil {
-			slog.Error("Failed to build streaming request URL", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build request URL: %w", err)}
-			return
-		}
-
-		// TODO: Implement actual streaming in later tasks
-		slog.Info("Custom Gemini provider stream called",
-			"messages_count", len(messages),
-			"tools_count", len(tools),
-			"request_url", requestURL,
-			"model", c.getModelName())
-
-		// Send minimal mock events
-		eventChan <- ProviderEvent{Type: EventContentStart}
-		eventChan <- ProviderEvent{
-			Type:    EventContentDelta,
-			Content: "Custom Gemini streaming response (stub)",
-		}
-		eventChan <- ProviderEvent{Type: EventContentStop}
-		eventChan <- ProviderEvent{
-			Type: EventComplete,
-			Response: &ProviderResponse{
-				Content:      "Custom Gemini streaming response (stub)",
-				ToolCalls:    []message.ToolCall{},
-				Usage:        TokenUsage{},
-				FinishReason: message.FinishReasonEndTurn,
-			},
-		}
-	}()
-
-	return eventChan
+	switch mode {
+	case ModeStandard:
+		// Use Server-Sent Events streaming for standard mode
+		return c.streamStandard(ctx, messages, tools)
+	case ModeFull:
+		// Use streaming simulation for complete URL mode
+		return c.streamSimulated(ctx, messages, tools)
+	default:
+		eventChan := make(chan ProviderEvent)
+		go func() {
+			defer close(eventChan)
+			slog.Error("Unknown URL mode for streaming", "mode", mode)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("unknown URL mode: %d", mode)}
+		}()
+		return eventChan
+	}
 }
 
 // Model implements the ProviderClient interface

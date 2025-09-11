@@ -79,9 +79,10 @@ func (c *geminiContent) Validate() error {
 		return fmt.Errorf("%w: %s", ErrInvalidRole, c.Role)
 	}
 
-	if len(c.Parts) == 0 {
-		return ErrEmptyParts
-	}
+	// Allow empty parts for streaming responses (e.g., finish reason only)
+	// if len(c.Parts) == 0 {
+	//	return ErrEmptyParts
+	// }
 
 	for i, part := range c.Parts {
 		if err := part.Validate(); err != nil {

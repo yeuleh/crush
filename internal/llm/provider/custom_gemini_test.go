@@ -186,7 +186,7 @@ func TestCustomGeminiClient_Stream(t *testing.T) {
 				require.Len(t, events, 4)
 				assert.Equal(t, EventContentStart, events[0].Type)
 				assert.Equal(t, EventContentDelta, events[1].Type)
-				assert.Contains(t, events[1].Content, "stub")
+				assert.Contains(t, events[1].Content, "placeholder")
 				assert.Equal(t, EventContentStop, events[2].Type)
 				assert.Equal(t, EventComplete, events[3].Type)
 				assert.NotNil(t, events[3].Response)

@@ -507,32 +507,32 @@ git commit 2b2aad52 -m "fix: correct Gemini API authentication method (验收修
    ```bash
    # 文件路径: internal/llm/provider/custom_gemini_stream.go
    ```
-   - [ ] 实现 `streamStandard` 方法
-   - [ ] 处理 Server-Sent Events 响应
-   - [ ] 实现流式数据解析器
-   - [ ] 事件类型转换和分发
+   - [x] 实现 `streamStandard` 方法
+   - [x] 处理 Server-Sent Events 响应
+   - [x] 实现流式数据解析器
+   - [x] 事件类型转换和分发
 
 2. **流式事件处理**
-   - [ ] 实现 `parseStreamChunk` 方法
-   - [ ] 处理内容增量事件
-   - [ ] 处理流式完成事件
-   - [ ] 错误和中断处理
+   - [x] 实现 `parseStreamChunk` 方法
+   - [x] 处理内容增量事件
+   - [x] 处理流式完成事件
+   - [x] 错误和中断处理
 
 3. **集成到主 stream 方法**
-   - [ ] 实现 `stream` 方法主逻辑
-   - [ ] 根据 URL 模式选择流式策略
-   - [ ] 统一事件通道管理
+   - [x] 实现 `stream` 方法主逻辑
+   - [x] 根据 URL 模式选择流式策略
+   - [x] 统一事件通道管理
 
 #### 测试任务
-- [ ] SSE 解析单元测试
-- [ ] 流式事件处理测试
-- [ ] 流式响应集成测试
-- [ ] 中断和错误场景测试
+- [x] SSE 解析单元测试
+- [x] 流式事件处理测试
+- [x] 流式响应集成测试
+- [x] 中断和错误场景测试
 
 #### 验收任务
-- [ ] 标准模式流式响应正常工作
-- [ ] 事件顺序正确（start -> delta -> stop -> complete）
-- [ ] 错误处理健壮
+- [x] 标准模式流式响应正常工作
+- [x] 事件顺序正确（start -> delta -> stop -> complete）
+- [x] 错误处理健壮
 
 #### Git 提交
 ```bash
