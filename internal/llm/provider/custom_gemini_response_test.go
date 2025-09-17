@@ -157,8 +157,8 @@ func TestCustomGeminiClient_parseResponse(t *testing.T) {
 			expectedError: "no candidates in response",
 		},
 		{
-			name: "invalid JSON",
-			responseJSON: `{invalid json}`,
+			name:          "invalid JSON",
+			responseJSON:  `{invalid json}`,
 			expectedError: "failed to parse response",
 		},
 		{
@@ -509,10 +509,10 @@ func (m *mockReadCloser) Close() error {
 func TestGenerateToolCallID(t *testing.T) {
 	// Test that generateToolCallID produces unique IDs
 	id1 := generateToolCallID()
-	
+
 	// Add a small delay to ensure different timestamps
 	time.Sleep(1 * time.Millisecond)
-	
+
 	id2 := generateToolCallID()
 
 	assert.NotEqual(t, id1, id2)

@@ -27,7 +27,7 @@ func GetCleanEndpointURL(baseURL string) string {
 func CreateCustomEndpointMiddleware(customEndpointURL string) option.Middleware {
 	// Clean the endpoint URL (remove # marker)
 	cleanEndpointURL := GetCleanEndpointURL(customEndpointURL)
-	
+
 	return func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 		// Parse the custom endpoint URL
 		customURL, err := url.Parse(cleanEndpointURL)
@@ -40,12 +40,12 @@ func CreateCustomEndpointMiddleware(customEndpointURL string) option.Middleware 
 		if req.URL.Path == "/v1/chat/completions" {
 			// Store original query parameters
 			originalQuery := req.URL.RawQuery
-			
+
 			// Replace the entire URL with the custom endpoint
 			req.URL.Scheme = customURL.Scheme
 			req.URL.Host = customURL.Host
 			req.URL.Path = customURL.Path
-			
+
 			// Handle query parameters
 			if customURL.RawQuery != "" {
 				if originalQuery != "" {
@@ -57,7 +57,7 @@ func CreateCustomEndpointMiddleware(customEndpointURL string) option.Middleware 
 				req.URL.RawQuery = originalQuery
 			}
 		}
-		
+
 		// For all other endpoints (like /v1/models), proceed normally
 		// This means other API calls will fail as expected per requirement #4
 		return next(req)

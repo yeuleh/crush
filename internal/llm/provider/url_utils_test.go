@@ -109,7 +109,7 @@ func TestCustomEndpointMiddleware(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			httpClient := &testHTTPClient{}
-			
+
 			client := openai.NewClient(
 				option.WithAPIKey("test-key"),
 				option.WithBaseURL("https://api.openai.com/v1"), // placeholder
@@ -148,12 +148,12 @@ func TestCustomEndpointMiddleware(t *testing.T) {
 
 func TestCustomEndpointMiddlewareIgnoresOtherPaths(t *testing.T) {
 	customEndpoint := "https://my.custom.domain/custom/openai/gpt#"
-	
+
 	// Create a mock request with a different path (not /v1/chat/completions)
 	req, _ := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
-	
+
 	middleware := CreateCustomEndpointMiddleware(customEndpoint)
-	
+
 	// Call middleware directly
 	_, err := middleware(req, func(r *http.Request) (*http.Response, error) {
 		// The URL should not be modified for non-chat-completions paths
@@ -162,7 +162,7 @@ func TestCustomEndpointMiddlewareIgnoresOtherPaths(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
 	})
-	
+
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}

@@ -163,9 +163,9 @@ func TestResolveGeminiURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			
+
 			result, err := ResolveGeminiURL(tt.baseURL, tt.methodPath)
-			
+
 			if tt.expectedErr != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.expectedErr)
@@ -214,7 +214,7 @@ func TestResolveGeminiURLFromEnv(t *testing.T) {
 			expected:   "https://google.example.com/v1beta/models/gemini-pro:generateContent",
 		},
 		{
-			name: "use default when no env vars set",
+			name:    "use default when no env vars set",
 			envVars: map[string]string{
 				// Empty env vars
 			},
@@ -253,14 +253,14 @@ func TestResolveGeminiURLFromEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Note: Cannot use t.Parallel() with t.Setenv()
-			
+
 			// Set up environment variables
 			for key, value := range tt.envVars {
 				t.Setenv(key, value)
 			}
-			
+
 			result, err := ResolveGeminiURLFromEnv(tt.methodPath)
-			
+
 			if tt.expectedErr != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.expectedErr)
@@ -275,60 +275,60 @@ func TestResolveGeminiURLFromEnv(t *testing.T) {
 
 func TestDetectURLMode(t *testing.T) {
 	tests := []struct {
-		name        string
-		baseURL     string
+		name         string
+		baseURL      string
 		expectedMode URLMode
-		expectedURL string
-		expectedErr error
+		expectedURL  string
+		expectedErr  error
 	}{
 		{
-			name:        "standard mode - no hash",
-			baseURL:     "https://api.example.com",
+			name:         "standard mode - no hash",
+			baseURL:      "https://api.example.com",
 			expectedMode: ModeStandard,
-			expectedURL: "https://api.example.com",
+			expectedURL:  "https://api.example.com",
 		},
 		{
-			name:        "complete URL mode - single trailing hash",
-			baseURL:     "https://api.example.com/complete#",
+			name:         "complete URL mode - single trailing hash",
+			baseURL:      "https://api.example.com/complete#",
 			expectedMode: ModeFull,
-			expectedURL: "https://api.example.com/complete",
+			expectedURL:  "https://api.example.com/complete",
 		},
 		{
-			name:        "empty base URL",
-			baseURL:     "",
+			name:         "empty base URL",
+			baseURL:      "",
 			expectedMode: ModeStandard,
-			expectedURL: "",
-			expectedErr: ErrInvalidBaseURL,
+			expectedURL:  "",
+			expectedErr:  ErrInvalidBaseURL,
 		},
 		{
-			name:        "multiple trailing hash",
-			baseURL:     "https://api.example.com##",
+			name:         "multiple trailing hash",
+			baseURL:      "https://api.example.com##",
 			expectedMode: ModeStandard,
-			expectedURL: "",
-			expectedErr: ErrAmbiguousFullURLMarker,
+			expectedURL:  "",
+			expectedErr:  ErrAmbiguousFullURLMarker,
 		},
 		{
-			name:        "hash in middle",
-			baseURL:     "https://api.example.com#fragment/path",
+			name:         "hash in middle",
+			baseURL:      "https://api.example.com#fragment/path",
 			expectedMode: ModeStandard,
-			expectedURL: "",
-			expectedErr: ErrAmbiguousFullURLMarker,
+			expectedURL:  "",
+			expectedErr:  ErrAmbiguousFullURLMarker,
 		},
 		{
-			name:        "just hash",
-			baseURL:     "#",
+			name:         "just hash",
+			baseURL:      "#",
 			expectedMode: ModeStandard,
-			expectedURL: "",
-			expectedErr: ErrInvalidBaseURL,
+			expectedURL:  "",
+			expectedErr:  ErrInvalidBaseURL,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			
+
 			mode, cleanedURL, err := DetectURLMode(tt.baseURL)
-			
+
 			if tt.expectedErr != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.expectedErr)
@@ -350,28 +350,28 @@ func TestValidateBaseURL(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			name:        "valid HTTPS URL",
-			baseURL:     "https://api.example.com",
+			name:    "valid HTTPS URL",
+			baseURL: "https://api.example.com",
 		},
 		{
-			name:        "valid HTTP URL",
-			baseURL:     "http://api.example.com",
+			name:    "valid HTTP URL",
+			baseURL: "http://api.example.com",
 		},
 		{
-			name:        "valid URL with port",
-			baseURL:     "https://api.example.com:8080",
+			name:    "valid URL with port",
+			baseURL: "https://api.example.com:8080",
 		},
 		{
-			name:        "valid IPv4 URL",
-			baseURL:     "https://192.168.1.1",
+			name:    "valid IPv4 URL",
+			baseURL: "https://192.168.1.1",
 		},
 		{
-			name:        "valid IPv6 URL",
-			baseURL:     "https://[2001:db8::1]",
+			name:    "valid IPv6 URL",
+			baseURL: "https://[2001:db8::1]",
 		},
 		{
-			name:        "valid localhost",
-			baseURL:     "http://localhost:3000",
+			name:    "valid localhost",
+			baseURL: "http://localhost:3000",
 		},
 		{
 			name:        "empty URL",
@@ -408,9 +408,9 @@ func TestValidateBaseURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			
+
 			err := ValidateBaseURL(tt.baseURL)
-			
+
 			if tt.expectedErr != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.expectedErr)
@@ -468,9 +468,9 @@ func TestValidateMethodPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			
+
 			err := ValidateMethodPath(tt.methodPath)
-			
+
 			if tt.expectedErr != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.expectedErr)
@@ -522,7 +522,7 @@ func TestNormalizeMethodPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			
+
 			result := normalizeMethodPath(tt.methodPath)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -584,9 +584,9 @@ func TestJoinURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			
+
 			result, err := joinURL(tt.baseURL, tt.methodPath)
-			
+
 			if tt.expectedErr != nil {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedErr.Error())
@@ -658,12 +658,12 @@ func TestGetFirstNonEmptyEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Note: Cannot use t.Parallel() with t.Setenv()
-			
+
 			// Set up environment variables
 			for key, value := range tt.envVars {
 				t.Setenv(key, value)
 			}
-			
+
 			result := getFirstNonEmptyEnv(tt.keys)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -673,19 +673,19 @@ func TestGetFirstNonEmptyEnv(t *testing.T) {
 func TestConcurrentSafety(t *testing.T) {
 	const numGoroutines = 100
 	const numIterations = 10
-	
+
 	var wg sync.WaitGroup
 	results := make(chan string, numGoroutines*numIterations)
-	
+
 	// Test concurrent calls to ResolveGeminiURL
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			
+
 			baseURL := "https://api.example.com"
 			methodPath := "v1beta/models/gemini-pro:generateContent"
-			
+
 			for j := 0; j < numIterations; j++ {
 				result, err := ResolveGeminiURL(baseURL, methodPath)
 				require.NoError(t, err)
@@ -693,10 +693,10 @@ func TestConcurrentSafety(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 	close(results)
-	
+
 	// Verify all results are consistent
 	expectedResult := "https://api.example.com/v1beta/models/gemini-pro:generateContent"
 	count := 0
@@ -704,7 +704,7 @@ func TestConcurrentSafety(t *testing.T) {
 		assert.Equal(t, expectedResult, result)
 		count++
 	}
-	
+
 	assert.Equal(t, numGoroutines*numIterations, count)
 }
 
@@ -714,10 +714,10 @@ func TestEnvironmentVariablePriority(t *testing.T) {
 	t.Setenv("CRUSH_GEMINI_BASE_URL", "https://crush.example.com")
 	t.Setenv("GEMINI_BASE_URL", "https://gemini.example.com")
 	t.Setenv("GOOGLE_GEMINI_BASE_URL", "https://google.example.com")
-	
+
 	result, err := ResolveGeminiURLFromEnv("path")
 	require.NoError(t, err)
-	
+
 	// Should use CRUSH_GEMINI_BASE_URL (highest priority)
 	expected := "https://crush.example.com/path"
 	assert.Equal(t, expected, result)
@@ -727,7 +727,7 @@ func TestEnvironmentVariablePriority(t *testing.T) {
 func BenchmarkResolveGeminiURL_Standard(b *testing.B) {
 	baseURL := "https://generativelanguage.googleapis.com"
 	methodPath := "v1beta/models/gemini-pro:generateContent"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := ResolveGeminiURL(baseURL, methodPath)
@@ -740,7 +740,7 @@ func BenchmarkResolveGeminiURL_Standard(b *testing.B) {
 func BenchmarkResolveGeminiURL_Complete(b *testing.B) {
 	baseURL := "https://api.example.com/complete-endpoint?key=abc123#"
 	methodPath := "ignored"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := ResolveGeminiURL(baseURL, methodPath)
@@ -753,9 +753,9 @@ func BenchmarkResolveGeminiURL_Complete(b *testing.B) {
 func BenchmarkResolveGeminiURLFromEnv(b *testing.B) {
 	os.Setenv("CRUSH_GEMINI_BASE_URL", "https://api.example.com")
 	defer os.Unsetenv("CRUSH_GEMINI_BASE_URL")
-	
+
 	methodPath := "v1beta/models/gemini-pro:generateContent"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := ResolveGeminiURLFromEnv(methodPath)

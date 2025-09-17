@@ -160,7 +160,7 @@ func (c *customGeminiClient) buildRequestURL(methodPath string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Add API key as query parameter for Gemini API
 	if c.providerOptions.apiKey != "" {
 		separator := "?"
@@ -169,7 +169,7 @@ func (c *customGeminiClient) buildRequestURL(methodPath string) (string, error) 
 		}
 		baseURL += separator + "key=" + c.providerOptions.apiKey
 	}
-	
+
 	return baseURL, nil
 }
 
@@ -414,7 +414,7 @@ func (c *customGeminiClient) buildHTTPRequest(ctx context.Context, method, url s
 
 	// Set user agent
 	req.Header.Set("User-Agent", "Crush/1.0")
-	
+
 	// Note: API key is added as query parameter in buildRequestURL, not as Authorization header
 
 	return req, nil
@@ -438,7 +438,7 @@ func (c *customGeminiClient) parseResponse(body []byte) (*ProviderResponse, erro
 
 	// Use the first candidate
 	candidate := response.Candidates[0]
-	
+
 	// Extract content and tool calls from the candidate
 	content, toolCalls := c.extractContentAndToolCalls(candidate.Content)
 
@@ -465,7 +465,7 @@ func (c *customGeminiClient) extractContentAndToolCalls(content geminiContent) (
 		if part.Text != "" {
 			textContent.WriteString(part.Text)
 		}
-		
+
 		if part.FunctionCall != nil {
 			toolCall := c.convertToToolCall(part.FunctionCall)
 			toolCalls = append(toolCalls, toolCall)
@@ -546,7 +546,7 @@ func (c *customGeminiClient) handleHTTPError(resp *http.Response) error {
 	// Try to parse as Gemini error response
 	var errorResp geminiErrorResponse
 	if err := json.Unmarshal(responseBody.Bytes(), &errorResp); err == nil {
-		return fmt.Errorf("Gemini API error (HTTP %d): %s - %s", 
+		return fmt.Errorf("Gemini API error (HTTP %d): %s - %s",
 			resp.StatusCode, errorResp.Error.Status, errorResp.Error.Message)
 	}
 

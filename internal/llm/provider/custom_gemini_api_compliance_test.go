@@ -82,7 +82,7 @@ func TestGeminiAPIRequestFormatCompliance(t *testing.T) {
 						]
 					}
 				}`
-				
+
 				// Re-marshal to compare JSON structure
 				actualJSON, err := json.Marshal(request)
 				require.NoError(t, err)
@@ -106,9 +106,9 @@ func TestGeminiAPIRequestFormatCompliance(t *testing.T) {
 			expectedURL:    "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=test-api-key",
 			expectedMethod: "POST",
 			expectedHeaders: map[string]string{
-				"Content-Type":  "application/json",
-				
-				"User-Agent":    "Crush/1.0",
+				"Content-Type": "application/json",
+
+				"User-Agent": "Crush/1.0",
 			},
 			validateRequestBody: func(t *testing.T, body []byte) {
 				var request geminiRequest
@@ -208,9 +208,9 @@ func TestGeminiAPIRequestFormatCompliance(t *testing.T) {
 			expectedURL:    "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=test-api-key",
 			expectedMethod: "POST",
 			expectedHeaders: map[string]string{
-				"Content-Type":  "application/json",
-				
-				"User-Agent":    "Crush/1.0",
+				"Content-Type": "application/json",
+
+				"User-Agent": "Crush/1.0",
 			},
 			validateRequestBody: func(t *testing.T, body []byte) {
 				var request geminiRequest
@@ -310,7 +310,7 @@ func TestGeminiAPIStreamingRequestFormat(t *testing.T) {
 	// Test streaming URL construction
 	methodPath := client.buildGeminiMethodPath("gemini-pro", "streamGenerateContent")
 	expectedStreamingURL := "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=test-api-key"
-	
+
 	actualURL, err := client.buildRequestURL(methodPath)
 	require.NoError(t, err)
 	assert.Equal(t, expectedStreamingURL, actualURL)
@@ -339,7 +339,7 @@ func TestGeminiAPIStreamingRequestFormat(t *testing.T) {
 	// Should have same structure as non-streaming request
 	assert.NotEmpty(t, streamRequest.Contents)
 	assert.NotNil(t, streamRequest.SystemInstruction)
-	
+
 	err = streamRequest.Validate()
 	assert.NoError(t, err)
 }

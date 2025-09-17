@@ -227,7 +227,7 @@ func joinURL(baseURL, methodPath string) (string, error) {
 		if strings.HasSuffix(base.Path, "/") && strings.HasPrefix(rel.Path, "/") {
 			combinedPath = base.Path + strings.TrimPrefix(rel.Path, "/")
 		}
-		
+
 		result := &url.URL{
 			Scheme:   base.Scheme,
 			Host:     base.Host,

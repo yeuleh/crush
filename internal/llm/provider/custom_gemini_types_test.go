@@ -1133,8 +1133,8 @@ func TestConvertComplexMessage(t *testing.T) {
 func TestConvertMessagesComprehensive(t *testing.T) {
 	client := &customGeminiClient{
 		providerOptions: providerClientOptions{
-			systemMessage:       "You are a helpful AI assistant",
-			systemPromptPrefix:  "IMPORTANT:",
+			systemMessage:      "You are a helpful AI assistant",
+			systemPromptPrefix: "IMPORTANT:",
 			maxTokens:          1000,
 		},
 	}
@@ -1322,8 +1322,8 @@ func TestGeminiStreamChunkDeserialization(t *testing.T) {
 			},
 		},
 		{
-			name: "empty stream chunk",
-			json: `{}`,
+			name:     "empty stream chunk",
+			json:     `{}`,
 			expected: geminiStreamChunk{},
 		},
 		{

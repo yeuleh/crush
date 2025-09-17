@@ -2,13 +2,16 @@ package provider
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/crush/internal/llm/tools"
 	"github.com/charmbracelet/crush/internal/message"
@@ -248,32 +251,304 @@ func (c *customGeminiClient) parseStreamChunk(data string) (*ProviderEvent, erro
 }
 
 // streamSimulated implements streaming simulation for complete URL mode
-// This will be implemented in Task 2.2
+// It first calls the complete URL to get the full response, then simulates streaming
 func (c *customGeminiClient) streamSimulated(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
 	eventChan := make(chan ProviderEvent)
 
 	go func() {
 		defer close(eventChan)
 
-		// TODO: Implement in Task 2.2
-		slog.Info("Streaming simulation not yet implemented (Task 2.2)")
+		// Build request URL for complete URL mode (non-streaming)
+		methodPath := c.buildGeminiMethodPath(c.getModelName(), "generateContent")
+		requestURL, err := c.buildRequestURL(methodPath)
+		if err != nil {
+			slog.Error("Failed to build complete URL request URL", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build request URL: %w", err)}
+			return
+		}
 
-		eventChan <- ProviderEvent{Type: EventContentStart}
-		eventChan <- ProviderEvent{
-			Type:    EventContentDelta,
-			Content: "Streaming simulation placeholder (Task 2.2)",
+		// Convert messages to Gemini format
+		request, err := c.convertMessages(messages, tools)
+		if err != nil {
+			slog.Error("Failed to convert messages for streaming simulation", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to convert messages: %w", err)}
+			return
 		}
-		eventChan <- ProviderEvent{Type: EventContentStop}
-		eventChan <- ProviderEvent{
-			Type: EventComplete,
-			Response: &ProviderResponse{
-				Content:      "Streaming simulation placeholder (Task 2.2)",
-				ToolCalls:    []message.ToolCall{},
-				Usage:        TokenUsage{},
-				FinishReason: message.FinishReasonEndTurn,
-			},
+
+		// Build HTTP request
+		httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
+		if err != nil {
+			slog.Error("Failed to build HTTP request for streaming simulation", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build HTTP request: %w", err)}
+			return
 		}
+
+		slog.Info("Starting streaming simulation with complete URL",
+			"url", requestURL,
+			"model", c.getModelName(),
+			"messages_count", len(messages),
+			"tools_count", len(tools))
+
+		// Execute HTTP request to get complete response
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			slog.Error("HTTP request failed for streaming simulation", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", err)}
+			return
+		}
+		defer resp.Body.Close()
+
+		// Check HTTP status code
+		if resp.StatusCode != http.StatusOK {
+			slog.Error("HTTP request returned error status for streaming simulation", "status", resp.StatusCode)
+			eventChan <- ProviderEvent{Type: EventError, Error: c.handleHTTPError(resp)}
+			return
+		}
+
+		// Read complete response body
+		var responseBody bytes.Buffer
+		if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+			slog.Error("Failed to read response body for streaming simulation", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to read response body: %w", err)}
+			return
+		}
+
+		// Parse complete response
+		response, err := c.parseResponse(responseBody.Bytes())
+		if err != nil {
+			slog.Error("Failed to parse response for streaming simulation", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to parse response: %w", err)}
+			return
+		}
+
+		slog.Info("Got complete response, starting streaming simulation",
+			"content_length", len(response.Content),
+			"tool_calls_count", len(response.ToolCalls),
+			"finish_reason", response.FinishReason)
+
+		// Simulate streaming from the complete response
+		if err := c.simulateStream(ctx, response, eventChan); err != nil {
+			slog.Error("Failed to simulate stream", "error", err)
+			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to simulate stream: %w", err)}
+			return
+		}
+
+		slog.Info("Streaming simulation completed successfully")
 	}()
 
 	return eventChan
+}
+
+// simulateStream simulates streaming events from a complete response
+// It chunks the content and sends it with realistic delays to mimic actual streaming
+func (c *customGeminiClient) simulateStream(ctx context.Context, response *ProviderResponse, eventChan chan<- ProviderEvent) error {
+	start := time.Now()
+	slog.Debug("Starting streaming simulation",
+		"content_length", len(response.Content),
+		"tool_calls_count", len(response.ToolCalls))
+
+	// Send content start event
+	eventChan <- ProviderEvent{Type: EventContentStart}
+
+	// Handle tool calls first if they exist
+	for i, toolCall := range response.ToolCalls {
+		select {
+		case <-ctx.Done():
+			slog.Debug("Streaming simulation cancelled during tool calls", "tool_call_index", i)
+			return ctx.Err()
+		default:
+		}
+
+		slog.Debug("Sending tool call event", "tool_name", toolCall.Name, "index", i)
+		eventChan <- ProviderEvent{
+			Type:     EventToolUseStart,
+			ToolCall: &toolCall,
+		}
+
+		// Small delay between tool calls
+		select {
+		case <-time.After(10 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	// Stream content if it exists
+	if response.Content != "" {
+		if err := c.streamContentChunks(ctx, response.Content, eventChan); err != nil {
+			slog.Error("Failed to stream content chunks", "error", err)
+			return fmt.Errorf("failed to stream content chunks: %w", err)
+		}
+	} else {
+		slog.Debug("No content to stream, skipping content chunks")
+	}
+
+	// Send content stop event
+	eventChan <- ProviderEvent{Type: EventContentStop}
+
+	// Send final complete event
+	eventChan <- ProviderEvent{
+		Type:     EventComplete,
+		Response: response,
+	}
+
+	duration := time.Since(start)
+	slog.Info("Streaming simulation completed",
+		"duration_ms", duration.Milliseconds(),
+		"content_length", len(response.Content),
+		"tool_calls_count", len(response.ToolCalls))
+
+	return nil
+}
+
+// streamContentChunks streams content in chunks with realistic delays
+func (c *customGeminiClient) streamContentChunks(ctx context.Context, content string, eventChan chan<- ProviderEvent) error {
+	if content == "" {
+		return nil
+	}
+
+	// Strategy: Split by words and send in chunks of 1-4 words
+	words := strings.Fields(content)
+	if len(words) == 0 {
+		// Content might be non-word characters, send as single chunk
+		slog.Debug("Content has no words, sending as single chunk", "content_length", len(content))
+		eventChan <- ProviderEvent{
+			Type:    EventContentDelta,
+			Content: content,
+		}
+		return nil
+	}
+
+	slog.Debug("Starting content chunking", "total_words", len(words))
+
+	currentPos := 0
+	chunkCount := 0
+	for currentPos < len(words) {
+		select {
+		case <-ctx.Done():
+			slog.Debug("Content streaming cancelled", "chunks_sent", chunkCount, "progress_percent", float64(currentPos)/float64(len(words))*100)
+			return ctx.Err()
+		default:
+		}
+
+		// Determine chunk size (1-4 words, with bias towards 1-2 words)
+		chunkSize := c.calculateChunkSize(len(words), currentPos)
+		if currentPos+chunkSize > len(words) {
+			chunkSize = len(words) - currentPos
+		}
+
+		// Build chunk content efficiently using a strings.Builder for larger chunks
+		var chunk string
+		if chunkSize == 1 {
+			// Optimize for single word (most common case)
+			chunk = words[currentPos]
+		} else {
+			// Use strings.Join for multi-word chunks
+			chunk = strings.Join(words[currentPos:currentPos+chunkSize], " ")
+		}
+
+		// Add space after chunk unless it's the last one
+		if currentPos+chunkSize < len(words) {
+			chunk += " "
+		}
+
+		// Send chunk
+		eventChan <- ProviderEvent{
+			Type:    EventContentDelta,
+			Content: chunk,
+		}
+
+		chunkCount++
+		currentPos += chunkSize
+
+		// Log progress for very long content
+		if len(words) > 100 && chunkCount%20 == 0 {
+			slog.Debug("Content streaming progress",
+				"chunks_sent", chunkCount,
+				"words_processed", currentPos,
+				"total_words", len(words),
+				"progress_percent", float64(currentPos)/float64(len(words))*100)
+		}
+
+		// Simulate realistic delay between chunks
+		delay := c.calculateDelay(currentPos, len(words))
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	slog.Debug("Content chunking completed", "total_chunks", chunkCount, "total_words", len(words))
+	return nil
+}
+
+// calculateChunkSize determines the size of the next content chunk
+// Uses weighted randomness to bias towards smaller chunks for realistic streaming feel
+func (c *customGeminiClient) calculateChunkSize(totalWords, currentPos int) int {
+	// For very short responses, prefer single words
+	if totalWords <= 10 {
+		return 1
+	}
+
+	// Bias towards smaller chunks (1-2 words) for more realistic streaming
+	random := rand.Float32()
+
+	// 60% chance of 1 word, 25% chance of 2 words, 10% chance of 3 words, 5% chance of 4 words
+	switch {
+	case random < 0.6:
+		return 1
+	case random < 0.85:
+		return 2
+	case random < 0.95:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// calculateDelay calculates the delay between chunks to simulate realistic streaming
+// Mimics actual LLM response patterns with variable delays based on position and content
+func (c *customGeminiClient) calculateDelay(currentPos, totalWords int) time.Duration {
+	const (
+		minDelay = 10  // Minimum delay in milliseconds
+		maxDelay = 180 // Maximum delay in milliseconds
+	)
+
+	// Base delay varies between 20-120ms for realistic feel
+	baseDelay := 20 + rand.Intn(100) // 20-120ms
+
+	// Calculate position-based adjustments
+	progress := float64(currentPos) / float64(totalWords)
+
+	// Slightly longer delays at the beginning (model "thinking")
+	if currentPos < 3 {
+		baseDelay += rand.Intn(60) // Extra 0-60ms for initial processing
+	} else if currentPos < 8 {
+		baseDelay += rand.Intn(30) // Extra 0-30ms for early words
+	}
+
+	// Slightly shorter delays towards the end (model "finishing up")
+	if progress > 0.8 {
+		baseDelay = int(float64(baseDelay) * 0.7) // Reduce by 30%
+	} else if progress > 0.6 {
+		baseDelay = int(float64(baseDelay) * 0.85) // Reduce by 15%
+	}
+
+	// Ensure delay is within bounds
+	if baseDelay < minDelay {
+		baseDelay = minDelay
+	} else if baseDelay > maxDelay {
+		baseDelay = maxDelay
+	}
+
+	// Add small random jitter for naturalness
+	jitter := rand.Intn(20) - 10 // ±10ms jitter
+	baseDelay += jitter
+
+	if baseDelay < minDelay {
+		baseDelay = minDelay
+	}
+
+	return time.Duration(baseDelay) * time.Millisecond
 }

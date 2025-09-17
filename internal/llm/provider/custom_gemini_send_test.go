@@ -107,7 +107,7 @@ func TestCustomGeminiClient_send(t *testing.T) {
 				assert.Equal(t, "POST", r.Method)
 				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 				assert.Equal(t, "Crush/1.0", r.Header.Get("User-Agent"))
-				
+
 				// Verify API key is in URL query parameter
 				assert.Equal(t, "test-api-key", r.URL.Query().Get("key"))
 
