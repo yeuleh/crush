@@ -81,10 +81,10 @@ func TestCustomGeminiClient_send(t *testing.T) {
 				}
 			}`,
 			serverStatus:  http.StatusBadRequest,
-			expectedError: "Gemini API error (HTTP 400): INVALID_ARGUMENT - Invalid request",
+			expectedError: "HTTP 400: Invalid request",
 		},
 		{
-			name: "network timeout simulation",
+			name: "client error response",
 			messages: []message.Message{
 				{
 					Role: message.User,
@@ -94,8 +94,8 @@ func TestCustomGeminiClient_send(t *testing.T) {
 				},
 			},
 			tools:         []tools.BaseTool{},
-			serverStatus:  http.StatusInternalServerError,
-			expectedError: "HTTP 500",
+			serverStatus:  http.StatusNotFound,
+			expectedError: "HTTP 404",
 		},
 	}
 

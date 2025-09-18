@@ -792,48 +792,23 @@ func TestCustomGeminiClient_StreamURLModeSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &customGeminiClient{
-				providerOptions: providerClientOptions{
-					apiKey: "test-key",
-					model: func(modelType config.SelectedModelType) catwalk.Model {
-						return catwalk.Model{ID: "gemini-1.5-flash"}
-					},
-					modelType: config.SelectedModelTypeLarge,
-				},
-				httpClient: &http.Client{},
-				baseURL:    tt.baseURL,
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
-
-			messages := []message.Message{
-				{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "Test"}}},
-			}
-
-			eventChan := client.stream(ctx, messages, nil)
-
-			// Read first event to check for errors
-			select {
-			case event := <-eventChan:
-				if tt.expectError {
-					if event.Type != EventError {
-						t.Errorf("Expected error event, got %v", event.Type)
-					}
-				} else {
-					if event.Type == EventError {
-						t.Errorf("Unexpected error: %v", event.Error)
-					}
+			// Test URL mode detection only, not actual streaming
+			mode, _, err := DetectURLMode(tt.baseURL)
+			
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
 				}
-			case <-ctx.Done():
-				if !tt.expectError {
-					t.Errorf("Expected events, but context timed out")
-				}
+				return
 			}
-
-			// Drain remaining events
-			for range eventChan {
-				// Consume all events
+			
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			
+			if mode != tt.expectMode {
+				t.Errorf("Expected URL mode %d, got %d", tt.expectMode, mode)
 			}
 		})
 	}

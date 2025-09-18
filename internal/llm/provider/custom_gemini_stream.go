@@ -23,65 +23,116 @@ func (c *customGeminiClient) streamStandard(ctx context.Context, messages []mess
 
 	go func() {
 		defer close(eventChan)
+		
+		attempts := 0
+		for {
+			attempts++
 
-		// Build request URL for streaming endpoint
-		methodPath := c.buildGeminiMethodPath(c.getModelName(), "streamGenerateContent")
-		requestURL, err := c.buildRequestURL(methodPath)
-		if err != nil {
-			slog.Error("Failed to build streaming request URL", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build request URL: %w", err)}
+			// Build request URL for streaming endpoint (rebuild in case of retries)
+			methodPath := c.buildGeminiMethodPath(c.getModelName(), "streamGenerateContent")
+			requestURL, err := c.buildRequestURL(methodPath)
+			if err != nil {
+				slog.Error("Failed to build streaming request URL", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build request URL: %w", err)}
+				return
+			}
+
+			// Convert messages to Gemini format
+			request, err := c.convertMessages(messages, tools)
+			if err != nil {
+				slog.Error("Failed to convert messages for streaming", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to convert messages: %w", err)}
+				return
+			}
+
+			// Build HTTP request
+			httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
+			if err != nil {
+				slog.Error("Failed to build HTTP request for streaming", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build HTTP request: %w", err)}
+				return
+			}
+
+			// Set Accept header for SSE
+			httpReq.Header.Set("Accept", "text/event-stream")
+
+			slog.Info("Starting SSE streaming request",
+				"url", requestURL,
+				"model", c.getModelName(),
+				"messages_count", len(messages),
+				"tools_count", len(tools),
+				"attempt", attempts)
+
+			// Execute HTTP request
+			resp, err := c.httpClient.Do(httpReq)
+			if err != nil {
+				// Check if this is a retryable error
+				retry, after, retryErr := c.shouldRetry(attempts, err)
+				if retryErr != nil {
+					slog.Error("HTTP streaming request failed", "error", retryErr)
+					eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", retryErr)}
+					return
+				}
+				if retry {
+					slog.Warn("Retrying streaming request due to error",
+						"attempt", attempts,
+						"max_retries", maxRetries,
+						"error", err.Error(),
+						"retry_after_ms", after.Milliseconds())
+					select {
+					case <-ctx.Done():
+						eventChan <- ProviderEvent{Type: EventError, Error: ctx.Err()}
+						return
+					case <-time.After(after):
+						continue
+					}
+				}
+				slog.Error("HTTP streaming request failed", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", err)}
+				return
+			}
+			defer resp.Body.Close()
+
+			// Check HTTP status code
+			if resp.StatusCode != http.StatusOK {
+				httpErr := c.handleHTTPError(resp)
+				
+				// Check if this is a retryable HTTP error
+				retry, after, retryErr := c.shouldRetry(attempts, httpErr)
+				if retryErr != nil {
+					slog.Error("HTTP streaming request returned error status", "status", resp.StatusCode, "error", retryErr)
+					eventChan <- ProviderEvent{Type: EventError, Error: retryErr}
+					return
+				}
+				if retry {
+					slog.Warn("Retrying streaming request due to HTTP error",
+						"attempt", attempts,
+						"max_retries", maxRetries,
+						"status_code", resp.StatusCode,
+						"retry_after_ms", after.Milliseconds())
+					select {
+					case <-ctx.Done():
+						eventChan <- ProviderEvent{Type: EventError, Error: ctx.Err()}
+						return
+					case <-time.After(after):
+						continue
+					}
+				}
+				slog.Error("HTTP streaming request returned error status", "status", resp.StatusCode)
+				eventChan <- ProviderEvent{Type: EventError, Error: httpErr}
+				return
+			}
+
+			// Process SSE stream
+			if err := c.processSSEStream(ctx, resp.Body, eventChan); err != nil {
+				slog.Error("Failed to process SSE stream", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to process SSE stream: %w", err)}
+				return
+			}
+
+			slog.Info("SSE streaming completed successfully", "attempts", attempts)
 			return
 		}
-
-		// Convert messages to Gemini format
-		request, err := c.convertMessages(messages, tools)
-		if err != nil {
-			slog.Error("Failed to convert messages for streaming", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to convert messages: %w", err)}
-			return
-		}
-
-		// Build HTTP request
-		httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
-		if err != nil {
-			slog.Error("Failed to build HTTP request for streaming", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build HTTP request: %w", err)}
-			return
-		}
-
-		// Set Accept header for SSE
-		httpReq.Header.Set("Accept", "text/event-stream")
-
-		slog.Info("Starting SSE streaming request",
-			"url", requestURL,
-			"model", c.getModelName(),
-			"messages_count", len(messages),
-			"tools_count", len(tools))
-
-		// Execute HTTP request
-		resp, err := c.httpClient.Do(httpReq)
-		if err != nil {
-			slog.Error("HTTP streaming request failed", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", err)}
-			return
-		}
-		defer resp.Body.Close()
-
-		// Check HTTP status code
-		if resp.StatusCode != http.StatusOK {
-			slog.Error("HTTP streaming request returned error status", "status", resp.StatusCode)
-			eventChan <- ProviderEvent{Type: EventError, Error: c.handleHTTPError(resp)}
-			return
-		}
-
-		// Process SSE stream
-		if err := c.processSSEStream(ctx, resp.Body, eventChan); err != nil {
-			slog.Error("Failed to process SSE stream", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to process SSE stream: %w", err)}
-			return
-		}
-
-		slog.Info("SSE streaming completed successfully")
 	}()
 
 	return eventChan
@@ -257,83 +308,135 @@ func (c *customGeminiClient) streamSimulated(ctx context.Context, messages []mes
 
 	go func() {
 		defer close(eventChan)
+		
+		attempts := 0
+		for {
+			attempts++
 
-		// Build request URL for complete URL mode (non-streaming)
-		methodPath := c.buildGeminiMethodPath(c.getModelName(), "generateContent")
-		requestURL, err := c.buildRequestURL(methodPath)
-		if err != nil {
-			slog.Error("Failed to build complete URL request URL", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build request URL: %w", err)}
+			// Build request URL for complete URL mode (non-streaming) (rebuild in case of retries)
+			methodPath := c.buildGeminiMethodPath(c.getModelName(), "generateContent")
+			requestURL, err := c.buildRequestURL(methodPath)
+			if err != nil {
+				slog.Error("Failed to build complete URL request URL", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build request URL: %w", err)}
+				return
+			}
+
+			// Convert messages to Gemini format
+			request, err := c.convertMessages(messages, tools)
+			if err != nil {
+				slog.Error("Failed to convert messages for streaming simulation", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to convert messages: %w", err)}
+				return
+			}
+
+			// Build HTTP request
+			httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
+			if err != nil {
+				slog.Error("Failed to build HTTP request for streaming simulation", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build HTTP request: %w", err)}
+				return
+			}
+
+			slog.Info("Starting streaming simulation with complete URL",
+				"url", requestURL,
+				"model", c.getModelName(),
+				"messages_count", len(messages),
+				"tools_count", len(tools),
+				"attempt", attempts)
+
+			// Execute HTTP request to get complete response
+			resp, err := c.httpClient.Do(httpReq)
+			if err != nil {
+				// Check if this is a retryable error
+				retry, after, retryErr := c.shouldRetry(attempts, err)
+				if retryErr != nil {
+					slog.Error("HTTP request failed for streaming simulation", "error", retryErr)
+					eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", retryErr)}
+					return
+				}
+				if retry {
+					slog.Warn("Retrying simulated streaming request due to error",
+						"attempt", attempts,
+						"max_retries", maxRetries,
+						"error", err.Error(),
+						"retry_after_ms", after.Milliseconds())
+					select {
+					case <-ctx.Done():
+						eventChan <- ProviderEvent{Type: EventError, Error: ctx.Err()}
+						return
+					case <-time.After(after):
+						continue
+					}
+				}
+				slog.Error("HTTP request failed for streaming simulation", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", err)}
+				return
+			}
+			defer resp.Body.Close()
+
+			// Check HTTP status code
+			if resp.StatusCode != http.StatusOK {
+				httpErr := c.handleHTTPError(resp)
+				
+				// Check if this is a retryable HTTP error
+				retry, after, retryErr := c.shouldRetry(attempts, httpErr)
+				if retryErr != nil {
+					slog.Error("HTTP request returned error status for streaming simulation", "status", resp.StatusCode, "error", retryErr)
+					eventChan <- ProviderEvent{Type: EventError, Error: retryErr}
+					return
+				}
+				if retry {
+					slog.Warn("Retrying simulated streaming request due to HTTP error",
+						"attempt", attempts,
+						"max_retries", maxRetries,
+						"status_code", resp.StatusCode,
+						"retry_after_ms", after.Milliseconds())
+					select {
+					case <-ctx.Done():
+						eventChan <- ProviderEvent{Type: EventError, Error: ctx.Err()}
+						return
+					case <-time.After(after):
+						continue
+					}
+				}
+				slog.Error("HTTP request returned error status for streaming simulation", "status", resp.StatusCode)
+				eventChan <- ProviderEvent{Type: EventError, Error: httpErr}
+				return
+			}
+
+			// Read complete response body
+			var responseBody bytes.Buffer
+			if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+				slog.Error("Failed to read response body for streaming simulation", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to read response body: %w", err)}
+				return
+			}
+
+			// Parse complete response
+			response, err := c.parseResponse(responseBody.Bytes())
+			if err != nil {
+				slog.Error("Failed to parse response for streaming simulation", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to parse response: %w", err)}
+				return
+			}
+
+			slog.Info("Got complete response, starting streaming simulation",
+				"content_length", len(response.Content),
+				"tool_calls_count", len(response.ToolCalls),
+				"finish_reason", response.FinishReason,
+				"attempts", attempts)
+
+			// Simulate streaming from the complete response
+			if err := c.simulateStream(ctx, response, eventChan); err != nil {
+				slog.Error("Failed to simulate stream", "error", err)
+				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to simulate stream: %w", err)}
+				return
+			}
+
+			slog.Info("Streaming simulation completed successfully", "attempts", attempts)
 			return
 		}
-
-		// Convert messages to Gemini format
-		request, err := c.convertMessages(messages, tools)
-		if err != nil {
-			slog.Error("Failed to convert messages for streaming simulation", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to convert messages: %w", err)}
-			return
-		}
-
-		// Build HTTP request
-		httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
-		if err != nil {
-			slog.Error("Failed to build HTTP request for streaming simulation", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build HTTP request: %w", err)}
-			return
-		}
-
-		slog.Info("Starting streaming simulation with complete URL",
-			"url", requestURL,
-			"model", c.getModelName(),
-			"messages_count", len(messages),
-			"tools_count", len(tools))
-
-		// Execute HTTP request to get complete response
-		resp, err := c.httpClient.Do(httpReq)
-		if err != nil {
-			slog.Error("HTTP request failed for streaming simulation", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", err)}
-			return
-		}
-		defer resp.Body.Close()
-
-		// Check HTTP status code
-		if resp.StatusCode != http.StatusOK {
-			slog.Error("HTTP request returned error status for streaming simulation", "status", resp.StatusCode)
-			eventChan <- ProviderEvent{Type: EventError, Error: c.handleHTTPError(resp)}
-			return
-		}
-
-		// Read complete response body
-		var responseBody bytes.Buffer
-		if _, err := responseBody.ReadFrom(resp.Body); err != nil {
-			slog.Error("Failed to read response body for streaming simulation", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to read response body: %w", err)}
-			return
-		}
-
-		// Parse complete response
-		response, err := c.parseResponse(responseBody.Bytes())
-		if err != nil {
-			slog.Error("Failed to parse response for streaming simulation", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to parse response: %w", err)}
-			return
-		}
-
-		slog.Info("Got complete response, starting streaming simulation",
-			"content_length", len(response.Content),
-			"tool_calls_count", len(response.ToolCalls),
-			"finish_reason", response.FinishReason)
-
-		// Simulate streaming from the complete response
-		if err := c.simulateStream(ctx, response, eventChan); err != nil {
-			slog.Error("Failed to simulate stream", "error", err)
-			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to simulate stream: %w", err)}
-			return
-		}
-
-		slog.Info("Streaming simulation completed successfully")
 	}()
 
 	return eventChan

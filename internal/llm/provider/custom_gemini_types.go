@@ -67,6 +67,16 @@ type geminiContent struct {
 
 // Validate validates the geminiContent structure
 func (c *geminiContent) Validate() error {
+	return c.validateInternal(false)
+}
+
+// ValidateStreaming validates the geminiContent structure with streaming-specific rules
+func (c *geminiContent) ValidateStreaming() error {
+	return c.validateInternal(true)
+}
+
+// validateInternal performs content validation with optional streaming mode
+func (c *geminiContent) validateInternal(allowEmptyParts bool) error {
 	if c.Role == "" {
 		return ErrInvalidRole
 	}
@@ -79,10 +89,10 @@ func (c *geminiContent) Validate() error {
 		return fmt.Errorf("%w: %s", ErrInvalidRole, c.Role)
 	}
 
-	// Allow empty parts for streaming responses (e.g., finish reason only)
-	// if len(c.Parts) == 0 {
-	//	return ErrEmptyParts
-	// }
+	// In streaming responses, parts can be empty (e.g., finish reason only chunks)
+	if !allowEmptyParts && len(c.Parts) == 0 {
+		return ErrEmptyParts
+	}
 
 	for i, part := range c.Parts {
 		if err := part.Validate(); err != nil {
@@ -282,7 +292,23 @@ type geminiCandidate struct {
 
 // Validate validates the geminiCandidate structure
 func (c *geminiCandidate) Validate() error {
-	if err := c.Content.Validate(); err != nil {
+	return c.validateInternal(false)
+}
+
+// ValidateStreaming validates the geminiCandidate structure with streaming-specific rules
+func (c *geminiCandidate) ValidateStreaming() error {
+	return c.validateInternal(true)
+}
+
+// validateInternal performs candidate validation with optional streaming mode
+func (c *geminiCandidate) validateInternal(allowEmptyParts bool) error {
+	var err error
+	if allowEmptyParts {
+		err = c.Content.ValidateStreaming()
+	} else {
+		err = c.Content.Validate()
+	}
+	if err != nil {
 		return fmt.Errorf("content: %w", err)
 	}
 
@@ -320,10 +346,10 @@ type geminiStreamChunk struct {
 	UsageMetadata *geminiUsage      `json:"usageMetadata,omitempty"`
 }
 
-// Validate validates the geminiStreamChunk structure
+// Validate validates the geminiStreamChunk structure using streaming-specific rules
 func (c *geminiStreamChunk) Validate() error {
 	for i, candidate := range c.Candidates {
-		if err := candidate.Validate(); err != nil {
+		if err := candidate.ValidateStreaming(); err != nil {
 			return fmt.Errorf("candidates[%d]: %w", i, err)
 		}
 	}

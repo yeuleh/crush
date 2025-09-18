@@ -57,58 +57,103 @@ func createCustomGeminiHTTPClient(opts providerClientOptions) *http.Client {
 
 // send implements the ProviderClient interface for non-streaming requests
 func (c *customGeminiClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
-	// Build request URL using URL resolver
-	methodPath := c.buildGeminiMethodPath(c.getModelName(), "generateContent")
-	requestURL, err := c.buildRequestURL(methodPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build request URL: %w", err)
+	attempts := 0
+
+	for {
+		attempts++
+
+		// Build request URL using URL resolver (rebuild in case of retries with updated config)
+		methodPath := c.buildGeminiMethodPath(c.getModelName(), "generateContent")
+		requestURL, err := c.buildRequestURL(methodPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build request URL: %w", err)
+		}
+
+		// Convert messages to Gemini format
+		request, err := c.convertMessages(messages, tools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert messages: %w", err)
+		}
+
+		// Build HTTP request
+		httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build HTTP request: %w", err)
+		}
+
+		// Execute HTTP request
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			// Check if this is a retryable error
+			retry, after, retryErr := c.shouldRetry(attempts, err)
+			if retryErr != nil {
+				return nil, fmt.Errorf("HTTP request failed: %w", retryErr)
+			}
+			if retry {
+				slog.Warn("Retrying send request due to error", 
+					"attempt", attempts, 
+					"max_retries", maxRetries, 
+					"error", err.Error(),
+					"retry_after_ms", after.Milliseconds())
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(after):
+					continue
+				}
+			}
+			return nil, fmt.Errorf("HTTP request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		// Check HTTP status code
+		if resp.StatusCode != http.StatusOK {
+			httpErr := c.handleHTTPError(resp)
+			
+			// Check if this is a retryable HTTP error
+			retry, after, retryErr := c.shouldRetry(attempts, httpErr)
+			if retryErr != nil {
+				return nil, retryErr
+			}
+			if retry {
+				slog.Warn("Retrying send request due to HTTP error",
+					"attempt", attempts,
+					"max_retries", maxRetries,
+					"status_code", resp.StatusCode,
+					"retry_after_ms", after.Milliseconds())
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(after):
+					continue
+				}
+			}
+			return nil, httpErr
+		}
+
+		// Read response body
+		var responseBody bytes.Buffer
+		if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		// Parse response
+		response, err := c.parseResponse(responseBody.Bytes())
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		slog.Info("Custom Gemini provider send completed",
+			"messages_count", len(messages),
+			"tools_count", len(tools),
+			"request_url", requestURL,
+			"model", c.getModelName(),
+			"response_length", len(response.Content),
+			"tool_calls_count", len(response.ToolCalls),
+			"attempts", attempts)
+
+		return response, nil
 	}
-
-	// Convert messages to Gemini format
-	request, err := c.convertMessages(messages, tools)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert messages: %w", err)
-	}
-
-	// Build HTTP request
-	httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build HTTP request: %w", err)
-	}
-
-	// Execute HTTP request
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check HTTP status code
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleHTTPError(resp)
-	}
-
-	// Read response body
-	var responseBody bytes.Buffer
-	if _, err := responseBody.ReadFrom(resp.Body); err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	// Parse response
-	response, err := c.parseResponse(responseBody.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	slog.Info("Custom Gemini provider send completed",
-		"messages_count", len(messages),
-		"tools_count", len(tools),
-		"request_url", requestURL,
-		"model", c.getModelName(),
-		"response_length", len(response.Content),
-		"tool_calls_count", len(response.ToolCalls))
-
-	return response, nil
 }
 
 // stream implements the ProviderClient interface for streaming requests
@@ -431,8 +476,8 @@ func (c *customGeminiClient) parseResponse(body []byte) (*ProviderResponse, erro
 		return nil, fmt.Errorf("no candidates in response")
 	}
 
-	// Validate response structure
-	if err := response.Validate(); err != nil {
+	// Validate response structure with lenient rules for empty parts
+	if err := c.validateResponseLenient(&response); err != nil {
 		return nil, fmt.Errorf("invalid response structure: %w", err)
 	}
 
@@ -529,6 +574,27 @@ func (c *customGeminiClient) convertFinishReason(reason string) message.FinishRe
 	}
 }
 
+// validateResponseLenient validates a response with lenient rules for empty parts
+func (c *customGeminiClient) validateResponseLenient(response *geminiResponse) error {
+	if len(response.Candidates) == 0 {
+		return fmt.Errorf("candidates cannot be empty")
+	}
+
+	for i, candidate := range response.Candidates {
+		if err := candidate.ValidateStreaming(); err != nil {
+			return fmt.Errorf("candidates[%d]: %w", i, err)
+		}
+	}
+
+	if response.UsageMetadata != nil {
+		if err := response.UsageMetadata.Validate(); err != nil {
+			return fmt.Errorf("usageMetadata: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // generateToolCallID generates a unique ID for tool calls
 func generateToolCallID() string {
 	// Simple implementation using timestamp and random suffix
@@ -538,18 +604,21 @@ func generateToolCallID() string {
 
 // handleHTTPError handles HTTP error responses from the Gemini API
 func (c *customGeminiClient) handleHTTPError(resp *http.Response) error {
+	// Read response body
 	var responseBody bytes.Buffer
 	if _, err := responseBody.ReadFrom(resp.Body); err != nil {
 		return fmt.Errorf("HTTP %d: failed to read error response body: %w", resp.StatusCode, err)
 	}
 
-	// Try to parse as Gemini error response
-	var errorResp geminiErrorResponse
-	if err := json.Unmarshal(responseBody.Bytes(), &errorResp); err == nil {
-		return fmt.Errorf("Gemini API error (HTTP %d): %s - %s",
-			resp.StatusCode, errorResp.Error.Status, errorResp.Error.Message)
-	}
+	// Create structured HTTP error
+	httpErr := createHTTPError(resp, responseBody.Bytes())
 
-	// Fallback to generic HTTP error
-	return fmt.Errorf("HTTP %d: %s - %s", resp.StatusCode, resp.Status, responseBody.String())
+	// Log error details for debugging
+	slog.Error("HTTP error response",
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"message", httpErr.Message,
+		"content_type", resp.Header.Get("Content-Type"))
+
+	return httpErr
 }

@@ -663,54 +663,90 @@ Next: Task 2.3 (错误处理和重试机制)"
 
 ---
 
-### Task 2.3: 错误处理和重试机制
+### Task 2.3: 错误处理和重试机制 ✅ **已完成** (1.5 天)
 **需求编号**: US009  
-**预计时间**: 1.5 天
+**优先级**: P0  
+**完成时间**: 2025-09-18  
 
-#### 开发任务
-1. **HTTP 错误类型定义**
+#### 开发任务 ✅ **全部完成**
+1. **HTTP 错误类型定义** ✅
    ```bash
    # 文件路径: internal/llm/provider/custom_gemini_errors.go
    ```
-   - [ ] 定义 `HTTPError` 结构体
-   - [ ] 定义错误分类和常量
-   - [ ] 实现错误检测函数
-   - [ ] API 错误响应解析
+   - [x] ~~定义 `HTTPError` 结构体~~ ✅
+   - [x] ~~定义错误分类和常量~~ ✅
+   - [x] ~~实现错误检测函数~~ ✅
+   - [x] ~~API 错误响应解析~~ ✅
 
-2. **重试策略实现**
-   - [ ] 实现 `shouldRetry` 方法
-   - [ ] 指数退避算法
-   - [ ] Jitter 随机化
-   - [ ] 速率限制处理（429）
-   - [ ] 认证错误处理（401/403）
+2. **重试策略实现** ✅
+   - [x] ~~实现 `shouldRetry` 方法~~ ✅
+   - [x] ~~指数退避算法~~ ✅
+   - [x] ~~Jitter 随机化~~ ✅
+   - [x] ~~速率限制处理（429）~~ ✅
+   - [x] ~~认证错误处理（401/403）~~ ✅
 
-3. **API 密钥刷新**
-   - [ ] 实现 `refreshAPIKey` 方法
-   - [ ] 重新解析配置获取新密钥
-   - [ ] 重建 HTTP 客户端
+3. **API 密钥刷新** ✅
+   - [x] ~~实现 `refreshAPIKey` 方法~~ ✅
+   - [x] ~~重新解析配置获取新密钥~~ ✅
+   - [x] ~~HTTP 客户端 API 密钥更新~~ ✅
 
-#### 测试任务
-- [ ] 错误检测函数测试
-- [ ] 重试策略单元测试
-- [ ] 退避算法测试
-- [ ] API 密钥刷新测试
+#### 测试任务 ✅ **全部完成**
+- [x] ~~错误检测函数测试~~ ✅
+- [x] ~~重试策略单元测试~~ ✅
+- [x] ~~退避算法测试~~ ✅
+- [x] ~~API 密钥刷新测试~~ ✅
+- [x] ~~网络错误检测测试~~ ✅
+- [x] ~~HTTP 错误构造测试~~ ✅
+- [x] ~~Retry-After 头解析测试~~ ✅
 
-#### 验收任务
-- [ ] 各种 HTTP 错误都能正确处理
-- [ ] 重试次数和延迟符合预期
-- [ ] API 密钥过期能自动恢复
+#### 验收任务 ✅ **全部满足**
+- [x] ~~各种 HTTP 错误都能正确处理~~ ✅
+- [x] ~~重试次数和延迟符合预期~~ ✅
+- [x] ~~API 密钥过期能自动恢复~~ ✅
+- [x] ~~流式响应空 parts 兼容性修复~~ ✅
 
-#### Git 提交
+#### 实现亮点 ✨
+- **全面错误分类**: HTTP 错误、网络错误、系统调用错误的智能检测
+- **智能重试策略**: 指数退避 + Jitter 防惊群，最大重试 8 次，基础延迟 2 秒，最大 60 秒
+- **自动 API 密钥刷新**: 401/403 错误时自动从配置重新获取密钥
+- **速率限制处理**: 支持 Retry-After 头部解析和 429 状态码处理
+- **Context 感知**: 正确处理 context.Canceled 和 context.DeadlineExceeded
+- **流式兼容性**: 修复空 parts 验证问题，支持合法的流式响应格式
+- **全面测试**: 633 行测试代码，包含单元测试和基准测试，覆盖所有关键路径
+
+#### Git 提交 ✅ **已完成**
 ```bash
-git commit -m "feat: implement robust error handling and retry mechanism
+git commit -m "feat: implement robust error handling and retry mechanism (Task 2.3)
 
 - Add comprehensive HTTP error classification and detection
-- Implement exponential backoff retry with jitter
-- Support automatic API key refresh on auth errors
-- Handle rate limiting (429) and server errors (5xx)
-- Add extensive error handling tests and edge cases
+- Implement exponential backoff retry with jitter (max 8 retries, 2s-60s)
+- Support automatic API key refresh on auth errors (401/403)
+- Handle rate limiting (429) with Retry-After header parsing
+- Add network error detection for DNS, connection, and syscall errors
+- Fix streaming validation to allow empty parts in finish reason chunks
+- Add extensive error handling tests (633 lines) covering all scenarios
+- Support context cancellation and timeout handling
+- Integrate retry logic into both send() and stream() methods
 
-Addresses: US009"
+Key Features:
+- Smart retry logic with exponential backoff and jitter randomization
+- Automatic API key refresh from configuration on authentication failures
+- Comprehensive network error detection (DNS, connection timeouts, syscall errors)
+- Rate limiting compliance with Retry-After header support
+- Streaming-aware validation for empty content parts in finish reason chunks
+- Full context cancellation support for graceful shutdown
+- Production-ready error logging with structured slog integration
+
+Addresses: US009 (错误处理和重试机制)
+Satisfies: AC009.1-AC009.6 (全部验收条件)
+Next: Task 2.4 (调试和监控集成)
+
+Files:
+- internal/llm/provider/custom_gemini_errors.go (355 lines)
+- internal/llm/provider/custom_gemini_errors_test.go (633 lines)
+- internal/llm/provider/custom_gemini_types.go (updated with streaming validation)
+- internal/llm/provider/custom_gemini.go (updated with retry integration and lenient parsing)
+- internal/llm/provider/custom_gemini_stream.go (updated with retry integration)"
 ```
 
 ---

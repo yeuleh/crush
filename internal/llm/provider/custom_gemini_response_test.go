@@ -459,7 +459,7 @@ func TestCustomGeminiClient_handleHTTPError(t *testing.T) {
 					"status": "INVALID_ARGUMENT"
 				}
 			}`,
-			expectedErr: "Gemini API error (HTTP 400): INVALID_ARGUMENT - Invalid request format",
+			expectedErr: "HTTP 400: Invalid request format",
 		},
 		{
 			name:         "Generic HTTP error",
@@ -477,7 +477,7 @@ func TestCustomGeminiClient_handleHTTPError(t *testing.T) {
 					"status": "UNAUTHENTICATED"
 				}
 			}`,
-			expectedErr: "Gemini API error (HTTP 401): UNAUTHENTICATED - Request had invalid authentication credentials",
+			expectedErr: "HTTP 401: Request had invalid authentication credentials",
 		},
 	}
 

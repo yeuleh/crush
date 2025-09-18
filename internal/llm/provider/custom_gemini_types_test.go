@@ -832,7 +832,8 @@ func TestBuildHTTPRequest(t *testing.T) {
 
 	// Check headers
 	assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
-	assert.Equal(t, "Bearer test-api-key", req.Header.Get("Authorization"))
+	// Note: API key is added as query parameter in buildRequestURL, not as Authorization header
+	assert.Empty(t, req.Header.Get("Authorization"))
 	assert.Equal(t, "Crush/1.0", req.Header.Get("User-Agent"))
 
 	// Check body
