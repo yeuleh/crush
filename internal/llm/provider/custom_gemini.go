@@ -57,7 +57,12 @@ func createCustomGeminiHTTPClient(opts providerClientOptions) *http.Client {
 
 // send implements the ProviderClient interface for non-streaming requests
 func (c *customGeminiClient) send(ctx context.Context, messages []message.Message, tools []tools.BaseTool) (*ProviderResponse, error) {
+	start := time.Now()
 	attempts := 0
+
+	c.logOperationContext("send_starting", 
+		"messages_count", len(messages),
+		"tools_count", len(tools))
 
 	for {
 		attempts++
@@ -66,27 +71,65 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 		methodPath := c.buildGeminiMethodPath(c.getModelName(), "generateContent")
 		requestURL, err := c.buildRequestURL(methodPath)
 		if err != nil {
+			slog.Error("Failed to build request URL", 
+				"error", err,
+				"method_path", methodPath,
+				"base_url", c.baseURL,
+				"model", c.getModelName())
 			return nil, fmt.Errorf("failed to build request URL: %w", err)
 		}
 
 		// Convert messages to Gemini format
 		request, err := c.convertMessages(messages, tools)
 		if err != nil {
+			slog.Error("Failed to convert messages to Gemini format", 
+				"error", err,
+				"messages_count", len(messages),
+				"tools_count", len(tools))
 			return nil, fmt.Errorf("failed to convert messages: %w", err)
 		}
 
+		slog.Debug("Messages converted to Gemini format", 
+			"contents_count", len(request.Contents),
+			"has_system_instruction", request.SystemInstruction != nil,
+			"tools_count", len(request.Tools))
+
 		// Build HTTP request
-		httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
+		httpReq, bodySize, err := c.buildHTTPRequestWithSize(ctx, "POST", requestURL, request)
 		if err != nil {
+			slog.Error("Failed to build HTTP request", 
+				"error", err,
+				"method", "POST",
+				"url", requestURL)
 			return nil, fmt.Errorf("failed to build HTTP request: %w", err)
 		}
+		
+		// Log detailed request information in debug mode
+		c.logRequestDetails(httpReq, bodySize)
 
 		// Execute HTTP request
+		requestStart := time.Now()
+		slog.Debug("Executing HTTP request", 
+			"url", requestURL,
+			"attempt", attempts)
+		
 		resp, err := c.httpClient.Do(httpReq)
+		requestDuration := time.Since(requestStart)
+		
 		if err != nil {
+			slog.Error("HTTP request execution failed", 
+				"error", err,
+				"attempt", attempts,
+				"duration_ms", requestDuration.Milliseconds(),
+				"url", requestURL)
+			
 			// Check if this is a retryable error
 			retry, after, retryErr := c.shouldRetry(attempts, err)
 			if retryErr != nil {
+				slog.Error("Max retries exceeded for HTTP request", 
+					"error", retryErr,
+					"attempts", attempts,
+					"max_retries", maxRetries)
 				return nil, fmt.Errorf("HTTP request failed: %w", retryErr)
 			}
 			if retry {
@@ -94,9 +137,11 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 					"attempt", attempts, 
 					"max_retries", maxRetries, 
 					"error", err.Error(),
-					"retry_after_ms", after.Milliseconds())
+					"retry_after_ms", after.Milliseconds(),
+					"total_duration_ms", time.Since(start).Milliseconds())
 				select {
 				case <-ctx.Done():
+					slog.Warn("Request cancelled during retry wait", "context_error", ctx.Err())
 					return nil, ctx.Err()
 				case <-time.After(after):
 					continue
@@ -104,15 +149,36 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 			}
 			return nil, fmt.Errorf("HTTP request failed: %w", err)
 		}
+		
+		slog.Debug("HTTP request completed", 
+			"status_code", resp.StatusCode,
+			"status", resp.Status,
+			"content_length", resp.ContentLength,
+			"duration_ms", requestDuration.Milliseconds(),
+			"attempt", attempts)
+		
+		// Log detailed response information in debug mode
+		c.logResponseDetails(resp, resp.ContentLength)
 		defer resp.Body.Close()
 
 		// Check HTTP status code
 		if resp.StatusCode != http.StatusOK {
+			slog.Warn("HTTP request returned non-OK status", 
+				"status_code", resp.StatusCode,
+				"status", resp.Status,
+				"url", requestURL,
+				"attempt", attempts)
+			
 			httpErr := c.handleHTTPError(resp)
 			
 			// Check if this is a retryable HTTP error
 			retry, after, retryErr := c.shouldRetry(attempts, httpErr)
 			if retryErr != nil {
+				slog.Error("Max retries exceeded for HTTP error", 
+					"error", retryErr,
+					"attempts", attempts,
+					"max_retries", maxRetries,
+					"status_code", resp.StatusCode)
 				return nil, retryErr
 			}
 			if retry {
@@ -120,9 +186,11 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 					"attempt", attempts,
 					"max_retries", maxRetries,
 					"status_code", resp.StatusCode,
-					"retry_after_ms", after.Milliseconds())
+					"retry_after_ms", after.Milliseconds(),
+					"total_duration_ms", time.Since(start).Milliseconds())
 				select {
 				case <-ctx.Done():
+					slog.Warn("Request cancelled during retry wait", "context_error", ctx.Err())
 					return nil, ctx.Err()
 				case <-time.After(after):
 					continue
@@ -133,24 +201,51 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 
 		// Read response body
 		var responseBody bytes.Buffer
-		if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+		readStart := time.Now()
+		respBodySize, err := responseBody.ReadFrom(resp.Body)
+		if err != nil {
+			slog.Error("Failed to read response body", 
+				"error", err,
+				"attempt", attempts)
 			return nil, fmt.Errorf("failed to read response body: %w", err)
 		}
+		
+		slog.Debug("Response body read", 
+			"body_size_bytes", respBodySize,
+			"read_duration_ms", time.Since(readStart).Milliseconds())
 
 		// Parse response
+		parseStart := time.Now()
 		response, err := c.parseResponse(responseBody.Bytes())
 		if err != nil {
+			slog.Error("Failed to parse response", 
+				"error", err,
+				"body_size_bytes", respBodySize,
+				"attempt", attempts)
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
+		
+		slog.Debug("Response parsed successfully", 
+			"parse_duration_ms", time.Since(parseStart).Milliseconds(),
+			"content_length", len(response.Content),
+			"tool_calls_count", len(response.ToolCalls),
+			"prompt_tokens", response.Usage.InputTokens,
+			"completion_tokens", response.Usage.OutputTokens)
 
+		totalDuration := time.Since(start)
+		
 		slog.Info("Custom Gemini provider send completed",
 			"messages_count", len(messages),
 			"tools_count", len(tools),
-			"request_url", requestURL,
 			"model", c.getModelName(),
 			"response_length", len(response.Content),
 			"tool_calls_count", len(response.ToolCalls),
-			"attempts", attempts)
+			"attempts", attempts,
+			"total_duration_ms", totalDuration.Milliseconds(),
+			"prompt_tokens", response.Usage.InputTokens,
+			"completion_tokens", response.Usage.OutputTokens,
+			"total_tokens", response.Usage.InputTokens + response.Usage.OutputTokens,
+			"success", true)
 
 		return response, nil
 	}
@@ -158,45 +253,278 @@ func (c *customGeminiClient) send(ctx context.Context, messages []message.Messag
 
 // stream implements the ProviderClient interface for streaming requests
 func (c *customGeminiClient) stream(ctx context.Context, messages []message.Message, tools []tools.BaseTool) <-chan ProviderEvent {
+	start := time.Now()
+	
 	// Detect URL mode to choose streaming strategy
 	mode, _, err := DetectURLMode(c.baseURL)
 	if err != nil {
 		eventChan := make(chan ProviderEvent)
 		go func() {
 			defer close(eventChan)
-			slog.Error("Failed to detect URL mode for streaming", "error", err)
+			slog.Error("Failed to detect URL mode for streaming", 
+				"error", err,
+				"base_url", c.baseURL,
+				"model", c.getModelName())
 			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to detect URL mode: %w", err)}
 		}()
-		return eventChan
+	return eventChan
 	}
 
-	slog.Info("Custom Gemini provider stream called",
+	slog.Info("Custom Gemini provider stream starting",
 		"messages_count", len(messages),
 		"tools_count", len(tools),
 		"model", c.getModelName(),
-		"url_mode", mode)
+		"url_mode", mode,
+		"base_url", c.baseURL)
 
 	switch mode {
 	case ModeStandard:
 		// Use Server-Sent Events streaming for standard mode
-		return c.streamStandard(ctx, messages, tools)
+		slog.Debug("Using standard SSE streaming mode", 
+			"model", c.getModelName(),
+			"mode", mode)
+		return c.streamStandardWithLogging(ctx, messages, tools, start)
 	case ModeFull:
 		// Use streaming simulation for complete URL mode
-		return c.streamSimulated(ctx, messages, tools)
+		slog.Debug("Using streaming simulation mode", 
+			"model", c.getModelName(),
+			"mode", mode)
+		return c.streamSimulatedWithLogging(ctx, messages, tools, start)
 	default:
 		eventChan := make(chan ProviderEvent)
 		go func() {
 			defer close(eventChan)
-			slog.Error("Unknown URL mode for streaming", "mode", mode)
+			slog.Error("Unknown URL mode for streaming", 
+				"mode", mode,
+				"base_url", c.baseURL,
+				"model", c.getModelName())
 			eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("unknown URL mode: %d", mode)}
 		}()
-		return eventChan
+	return eventChan
 	}
 }
 
 // Model implements the ProviderClient interface
 func (c *customGeminiClient) Model() catwalk.Model {
 	return c.providerOptions.model(c.providerOptions.modelType)
+}
+
+// streamStandardWithLogging wraps streamStandard with comprehensive logging
+func (c *customGeminiClient) streamStandardWithLogging(ctx context.Context, messages []message.Message, tools []tools.BaseTool, startTime time.Time) <-chan ProviderEvent {
+	eventChan := c.streamStandard(ctx, messages, tools)
+	loggedEventChan := make(chan ProviderEvent)
+
+	go func() {
+		defer close(loggedEventChan)
+
+		var eventCount int
+		var deltaCount int
+		var lastEventType EventType
+		var contentLength int
+		var toolCallsCount int
+
+		for event := range eventChan {
+			eventCount++
+			lastEventType = event.Type
+
+			// Log event details in debug mode
+			switch event.Type {
+			case EventContentStart:
+				slog.Debug("SSE stream content started",
+					"model", c.getModelName(),
+					"event_count", eventCount)
+				
+			case EventContentDelta:
+				deltaCount++
+				contentLength += len(event.Content)
+				if deltaCount%10 == 0 { // Log every 10th delta to avoid spam
+					slog.Debug("SSE stream delta progress",
+						"delta_count", deltaCount,
+						"content_length", contentLength,
+						"current_delta_length", len(event.Content))
+				}
+				
+			case EventContentStop:
+				slog.Debug("SSE stream content stopped",
+					"total_deltas", deltaCount,
+					"final_content_length", contentLength)
+				
+			case EventToolUseStart:
+				toolCallsCount++
+				slog.Debug("SSE stream tool call started",
+					"tool_calls_count", toolCallsCount,
+					"tool_name", func() string {
+						if event.ToolCall != nil {
+							return event.ToolCall.Name
+						}
+						return "unknown"
+					}())
+				
+			case EventComplete:
+				response := event.Response
+				totalDuration := time.Since(startTime)
+				slog.Info("SSE stream completed",
+					"model", c.getModelName(),
+					"total_events", eventCount,
+					"delta_events", deltaCount,
+					"content_length", len(response.Content),
+					"tool_calls_count", len(response.ToolCalls),
+					"total_duration_ms", totalDuration.Milliseconds(),
+					"prompt_tokens", response.Usage.InputTokens,
+					"completion_tokens", response.Usage.OutputTokens,
+					"finish_reason", response.FinishReason,
+					"success", true)
+				
+			case EventError:
+				totalDuration := time.Since(startTime)
+				slog.Error("SSE stream failed",
+					"model", c.getModelName(),
+					"total_events", eventCount,
+					"last_event_type", lastEventType,
+					"error", event.Error,
+					"total_duration_ms", totalDuration.Milliseconds())
+			}
+			
+			// Forward the event
+			loggedEventChan <- event
+		}
+
+		// Log if stream ended unexpectedly
+		if lastEventType != EventComplete && lastEventType != EventError {
+			slog.Warn("SSE stream ended unexpectedly",
+				"model", c.getModelName(),
+				"last_event_type", lastEventType,
+				"total_events", eventCount,
+				"total_duration_ms", time.Since(startTime).Milliseconds())
+		}
+	}()
+
+	return loggedEventChan
+}
+
+// streamSimulatedWithLogging wraps streamSimulated with comprehensive logging
+func (c *customGeminiClient) streamSimulatedWithLogging(ctx context.Context, messages []message.Message, tools []tools.BaseTool, startTime time.Time) <-chan ProviderEvent {
+	eventChan := c.streamSimulated(ctx, messages, tools)
+	loggedEventChan := make(chan ProviderEvent)
+
+	go func() {
+		defer close(loggedEventChan)
+
+		var eventCount int
+		var deltaCount int
+		var lastEventType EventType
+		var simulationStart time.Time
+		var simulationEnd time.Time
+		var contentLength int
+		var toolCallsCount int
+		var chunkCount int
+
+		for event := range eventChan {
+			eventCount++
+			lastEventType = event.Type
+
+			// Log event details in debug mode
+			switch event.Type {
+			case EventContentStart:
+				simulationStart = time.Now()
+				slog.Debug("Stream simulation content started",
+					"model", c.getModelName(),
+					"event_count", eventCount,
+					"preparation_duration_ms", simulationStart.Sub(startTime).Milliseconds())
+				
+			case EventContentDelta:
+				deltaCount++
+				chunkCount++
+				contentLength += len(event.Content)
+				if chunkCount%5 == 0 { // Log every 5th chunk for simulation
+					slog.Debug("Stream simulation progress",
+						"chunk_count", chunkCount,
+						"content_length", contentLength,
+						"current_chunk_length", len(event.Content),
+						"simulation_duration_ms", func() int64 {
+							if !simulationStart.IsZero() {
+								return time.Since(simulationStart).Milliseconds()
+							}
+							return 0
+						}())
+				}
+				
+			case EventContentStop:
+				simulationEnd = time.Now()
+				slog.Debug("Stream simulation content stopped",
+					"total_chunks", chunkCount,
+					"final_content_length", contentLength,
+					"simulation_duration_ms", func() int64 {
+						if !simulationStart.IsZero() && !simulationEnd.IsZero() {
+							return simulationEnd.Sub(simulationStart).Milliseconds()
+						}
+						return 0
+					}())
+				
+			case EventToolUseStart:
+				toolCallsCount++
+				slog.Debug("Stream simulation tool call started",
+					"tool_calls_count", toolCallsCount,
+					"tool_name", func() string {
+						if event.ToolCall != nil {
+							return event.ToolCall.Name
+						}
+						return "unknown"
+					}())
+				
+			case EventComplete:
+				response := event.Response
+				totalDuration := time.Since(startTime)
+				simulationDuration := func() int64 {
+					if !simulationStart.IsZero() && !simulationEnd.IsZero() {
+						return simulationEnd.Sub(simulationStart).Milliseconds()
+					}
+					return 0
+				}()
+				slog.Info("Stream simulation completed",
+					"model", c.getModelName(),
+					"total_events", eventCount,
+					"chunk_events", chunkCount,
+					"content_length", len(response.Content),
+					"tool_calls_count", len(response.ToolCalls),
+					"total_duration_ms", totalDuration.Milliseconds(),
+					"simulation_duration_ms", simulationDuration,
+					"preparation_duration_ms", func() int64 {
+						if !simulationStart.IsZero() {
+							return simulationStart.Sub(startTime).Milliseconds()
+						}
+						return 0
+					}(),
+					"prompt_tokens", response.Usage.InputTokens,
+					"completion_tokens", response.Usage.OutputTokens,
+					"finish_reason", response.FinishReason,
+					"success", true)
+				
+			case EventError:
+				totalDuration := time.Since(startTime)
+				slog.Error("Stream simulation failed",
+					"model", c.getModelName(),
+					"total_events", eventCount,
+					"last_event_type", lastEventType,
+					"error", event.Error,
+					"total_duration_ms", totalDuration.Milliseconds())
+			}
+			
+			// Forward the event
+			loggedEventChan <- event
+		}
+
+		// Log if stream ended unexpectedly
+		if lastEventType != EventComplete && lastEventType != EventError {
+			slog.Warn("Stream simulation ended unexpectedly",
+				"model", c.getModelName(),
+				"last_event_type", lastEventType,
+				"total_events", eventCount,
+				"total_duration_ms", time.Since(startTime).Milliseconds())
+		}
+	}()
+
+	return loggedEventChan
 }
 
 // buildRequestURL constructs the full request URL for a given Gemini API method
@@ -223,9 +551,63 @@ func (c *customGeminiClient) buildGeminiMethodPath(model, operation string) stri
 	return fmt.Sprintf("v1beta/models/%s:%s", model, operation)
 }
 
-// getModelName extracts the model name from the provider options
+// getModelName extracts the model name from provider options
 func (c *customGeminiClient) getModelName() string {
-	return c.Model().ID
+	return string(c.providerOptions.modelType)
+}
+
+// logOperationContext logs common operation context for debugging
+func (c *customGeminiClient) logOperationContext(operation string, extra ...interface{}) {
+	if !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		return
+	}
+	
+	args := []interface{}{
+		"operation", operation,
+		"provider", "custom-gemini",
+		"model", c.getModelName(),
+		"base_url", c.baseURL,
+		"http_client_timeout", c.httpClient.Timeout,
+	}
+	
+	// Append any extra key-value pairs
+	args = append(args, extra...)
+	
+	slog.Debug("Operation context", args...)
+}
+
+// logRequestDetails logs detailed HTTP request information
+func (c *customGeminiClient) logRequestDetails(req *http.Request, bodySize int) {
+	if !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		return
+	}
+	
+	slog.Debug("HTTP request details",
+		"method", req.Method,
+		"url", req.URL.String(),
+		"content_type", req.Header.Get("Content-Type"),
+		"user_agent", req.Header.Get("User-Agent"),
+		"accept", req.Header.Get("Accept"),
+		"body_size_bytes", bodySize,
+		"has_api_key", strings.Contains(req.URL.RawQuery, "key="),
+		"headers_count", len(req.Header))
+}
+
+// logResponseDetails logs detailed HTTP response information
+func (c *customGeminiClient) logResponseDetails(resp *http.Response, bodySize int64) {
+	if !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		return
+	}
+	
+	slog.Debug("HTTP response details",
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"content_type", resp.Header.Get("Content-Type"),
+		"content_length", resp.ContentLength,
+		"body_size_bytes", bodySize,
+		"headers_count", len(resp.Header),
+		"has_cache_control", resp.Header.Get("Cache-Control") != "",
+		"transfer_encoding", resp.Header.Get("Transfer-Encoding"))
 }
 
 // convertMessages converts Crush messages to Gemini API format
@@ -442,16 +824,34 @@ func (c *customGeminiClient) convertTools(tools []tools.BaseTool) []geminiTool {
 
 // buildHTTPRequest creates an HTTP request for the Gemini API
 func (c *customGeminiClient) buildHTTPRequest(ctx context.Context, method, url string, request *geminiRequest) (*http.Request, error) {
+	req, _, err := c.buildHTTPRequestWithSize(ctx, method, url, request)
+	return req, err
+}
+
+// buildHTTPRequestWithSize creates an HTTP request for the Gemini API and returns the request body size
+func (c *customGeminiClient) buildHTTPRequestWithSize(ctx context.Context, method, url string, request *geminiRequest) (*http.Request, int, error) {
 	// Serialize request body
 	requestBody, err := json.Marshal(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, 0, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	bodySize := len(requestBody)
+	
+	// Log JSON request body in debug mode
+	if slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		slog.Debug("Gemini request body",
+			"body_size_bytes", bodySize,
+			"contents_count", len(request.Contents),
+			"has_system_instruction", request.SystemInstruction != nil,
+			"tools_count", len(request.Tools),
+			"has_generation_config", request.GenerationConfig != nil)
 	}
 
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, 0, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	// Set required headers
@@ -462,7 +862,7 @@ func (c *customGeminiClient) buildHTTPRequest(ctx context.Context, method, url s
 
 	// Note: API key is added as query parameter in buildRequestURL, not as Authorization header
 
-	return req, nil
+	return req, bodySize, nil
 }
 
 // parseResponse parses a Gemini API response and converts it to ProviderResponse format

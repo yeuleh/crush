@@ -46,30 +46,46 @@ func (c *customGeminiClient) streamStandard(ctx context.Context, messages []mess
 			}
 
 			// Build HTTP request
-			httpReq, err := c.buildHTTPRequest(ctx, "POST", requestURL, request)
+			httpReq, bodySize, err := c.buildHTTPRequestWithSize(ctx, "POST", requestURL, request)
 			if err != nil {
-				slog.Error("Failed to build HTTP request for streaming", "error", err)
+				slog.Error("Failed to build HTTP request for streaming", 
+					"error", err,
+					"url", requestURL,
+					"attempt", attempts)
 				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to build HTTP request: %w", err)}
 				return
 			}
 
 			// Set Accept header for SSE
 			httpReq.Header.Set("Accept", "text/event-stream")
+			
+			// Log detailed request information in debug mode
+			c.logRequestDetails(httpReq, bodySize)
 
-			slog.Info("Starting SSE streaming request",
+			c.logOperationContext("sse_streaming_start", 
 				"url", requestURL,
-				"model", c.getModelName(),
 				"messages_count", len(messages),
 				"tools_count", len(tools),
-				"attempt", attempts)
+				"attempt", attempts,
+				"request_body_size", bodySize)
 
 			// Execute HTTP request
+			streamStart := time.Now()
 			resp, err := c.httpClient.Do(httpReq)
+			streamConnectDuration := time.Since(streamStart)
 			if err != nil {
+				slog.Error("SSE stream connection failed", 
+					"error", err,
+					"attempt", attempts,
+					"connect_duration_ms", streamConnectDuration.Milliseconds())
+				
 				// Check if this is a retryable error
 				retry, after, retryErr := c.shouldRetry(attempts, err)
 				if retryErr != nil {
-					slog.Error("HTTP streaming request failed", "error", retryErr)
+					slog.Error("Max retries exceeded for SSE stream", 
+						"error", retryErr,
+						"attempts", attempts,
+						"max_retries", maxRetries)
 					eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", retryErr)}
 					return
 				}
@@ -91,6 +107,13 @@ func (c *customGeminiClient) streamStandard(ctx context.Context, messages []mess
 				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("HTTP request failed: %w", err)}
 				return
 			}
+			
+			slog.Debug("SSE stream connected successfully", 
+				"status_code", resp.StatusCode,
+				"content_type", resp.Header.Get("Content-Type"),
+				"connect_duration_ms", streamConnectDuration.Milliseconds(),
+				"attempt", attempts)
+			
 			defer resp.Body.Close()
 
 			// Check HTTP status code
@@ -124,18 +147,179 @@ func (c *customGeminiClient) streamStandard(ctx context.Context, messages []mess
 			}
 
 			// Process SSE stream
-			if err := c.processSSEStream(ctx, resp.Body, eventChan); err != nil {
-				slog.Error("Failed to process SSE stream", "error", err)
+			processStart := time.Now()
+			if err := c.processSSEStreamWithLogging(ctx, resp.Body, eventChan); err != nil {
+				processDuration := time.Since(processStart)
+				slog.Error("Failed to process SSE stream", 
+					"error", err,
+					"process_duration_ms", processDuration.Milliseconds(),
+					"attempt", attempts)
 				eventChan <- ProviderEvent{Type: EventError, Error: fmt.Errorf("failed to process SSE stream: %w", err)}
 				return
 			}
 
-			slog.Info("SSE streaming completed successfully", "attempts", attempts)
+			processDuration := time.Since(processStart)
+			totalDuration := time.Since(streamStart)
+			slog.Info("SSE streaming completed successfully", 
+				"attempts", attempts,
+				"connect_duration_ms", streamConnectDuration.Milliseconds(),
+				"process_duration_ms", processDuration.Milliseconds(),
+				"total_duration_ms", totalDuration.Milliseconds())
 			return
 		}
 	}()
 
 	return eventChan
+}
+
+// processSSEStreamWithLogging wraps processSSEStream with additional logging
+func (c *customGeminiClient) processSSEStreamWithLogging(ctx context.Context, body io.Reader, eventChan chan<- ProviderEvent) error {
+	if !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		// If debug logging is not enabled, use the standard method
+		return c.processSSEStream(ctx, body, eventChan)
+	}
+	
+	var chunksReceived int
+	var bytesRead int64
+	var contentDeltas int
+	var toolCallEvents int
+	var parseErrors int
+	
+	// Create a counting reader to track bytes read
+	countingReader := &countingReader{reader: body, count: &bytesRead}
+	
+	defer func() {
+		slog.Debug("SSE stream processing completed",
+			"chunks_received", chunksReceived,
+			"bytes_read", bytesRead,
+			"content_deltas", contentDeltas,
+			"tool_call_events", toolCallEvents,
+			"parse_errors", parseErrors)
+	}()
+	
+	scanner := bufio.NewScanner(countingReader)
+
+	// Send content start event
+	eventChan <- ProviderEvent{Type: EventContentStart}
+
+	var accumulatedContent strings.Builder
+	var finalUsage TokenUsage
+	var finalFinishReason message.FinishReason = message.FinishReasonEndTurn
+	var toolCalls []message.ToolCall
+
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			slog.Debug("SSE stream cancelled by context", 
+				"chunks_processed", chunksReceived,
+				"bytes_read", bytesRead)
+			return ctx.Err()
+		default:
+		}
+
+		line := scanner.Text()
+
+		// Skip empty lines and non-data lines
+		if line == "" || !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		chunksReceived++
+		
+		// Extract data content
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Check for stream termination
+		if data == "[DONE]" {
+			slog.Debug("Received stream termination marker", 
+				"chunks_processed", chunksReceived)
+			break
+		}
+
+		// Parse stream chunk
+		event, err := c.parseStreamChunk(data)
+		if err != nil {
+			parseErrors++
+			slog.Warn("Failed to parse stream chunk", 
+				"error", err, 
+				"chunk_number", chunksReceived,
+				"data_length", len(data))
+			continue // Skip invalid chunks instead of failing the entire stream
+		}
+
+		if event != nil {
+			// Track event types for debugging
+			switch event.Type {
+			case EventContentDelta:
+				contentDeltas++
+				accumulatedContent.WriteString(event.Content)
+				if contentDeltas%10 == 0 {
+					slog.Debug("SSE content delta progress",
+						"content_deltas", contentDeltas,
+						"current_content_length", accumulatedContent.Len(),
+						"delta_length", len(event.Content))
+				}
+				
+			case EventToolUseStart:
+				toolCallEvents++
+				if event.ToolCall != nil {
+					toolCalls = append(toolCalls, *event.ToolCall)
+					slog.Debug("SSE tool call received",
+						"tool_name", event.ToolCall.Name,
+						"tool_calls_count", len(toolCalls))
+				}
+				
+			case EventComplete:
+				if event.Response != nil {
+					finalUsage = event.Response.Usage
+					finalFinishReason = event.Response.FinishReason
+					slog.Debug("SSE complete event received",
+						"finish_reason", finalFinishReason,
+						"prompt_tokens", finalUsage.InputTokens,
+						"completion_tokens", finalUsage.OutputTokens)
+					// Skip sending intermediate complete events
+					continue
+				}
+			}
+
+			// Send the event (except complete events which we handle at the end)
+			if event.Type != EventComplete {
+				eventChan <- *event
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading SSE stream: %w", err)
+	}
+
+	// Send content stop event
+	eventChan <- ProviderEvent{Type: EventContentStop}
+
+	// Send final complete event with accumulated data
+	eventChan <- ProviderEvent{
+		Type: EventComplete,
+		Response: &ProviderResponse{
+			Content:      accumulatedContent.String(),
+			ToolCalls:    toolCalls,
+			Usage:        finalUsage,
+			FinishReason: finalFinishReason,
+		},
+	}
+
+	return nil
+}
+
+// countingReader wraps an io.Reader to count bytes read
+type countingReader struct {
+	reader io.Reader
+	count  *int64
+}
+
+func (cr *countingReader) Read(p []byte) (int, error) {
+	n, err := cr.reader.Read(p)
+	*cr.count += int64(n)
+	return n, err
 }
 
 // processSSEStream processes Server-Sent Events stream from Gemini API
