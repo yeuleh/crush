@@ -2,16 +2,19 @@
 
 ## 🚀 总体进度概览
 
-**当前状态**: Tasks 1.1-1.5, 2.1, 2.2 全部完成 ✅  
-**完成时间**: 2025-09-17  
+**当前状态**: Tasks 1.1-1.5, 2.1-2.4 全部完成 ✅  
+**完成时间**: 2025-09-22  
 **Git Commits**: 
 - `16461b74` (feat: add Custom-Gemini provider skeleton - Task 1.1)
 - `4ce08893` (feat: implement dual-mode URL resolver - Task 1.2)
 - Task 1.3 & 1.4 (HTTP 客户端基础结构 & Gemini API 请求构建)
 - Task 1.5 (基础响应解析和发送)
 - `2b2aad52` (fix: correct Gemini API authentication method - 验收修正)
+- Task 2.1 (标准模式流式响应 - 2025-09-17)
 - Task 2.2 (完整 URL 模式流式模拟 - 2025-09-17)
-**下一步**: Task 2.3 - 错误处理和重试机制
+- Task 2.3 (错误处理和重试机制 - 2025-09-18)
+- `0f152170` (feat: comprehensive debugging and monitoring - Task 2.4 - 2025-09-22)
+**下一步**: Task 3.1 - 工具调用支持
 
 ### 完成情况统计
 - ✅ **Task 1.1**: Provider 骨架搭建 - **已完成** (100%)
@@ -21,6 +24,8 @@
 - ✅ **Task 1.5**: 基础响应解析和发送 - **已完成** (100%)
 - ✅ **Task 2.1**: 标准模式流式响应 - **已完成** (100%)
 - ✅ **Task 2.2**: 完整 URL 模式流式模拟 - **已完成** (100%)
+- ✅ **Task 2.3**: 错误处理和重试机制 - **已完成** (100%)
+- ✅ **Task 2.4**: 调试和监控集成 - **已完成** (100%)
 
 ### 主要成果
 - 🎯 创建了类型安全的 `TypeCustomGemini` provider 类型
@@ -545,16 +550,18 @@ Next: Task 2.2 (完整 URL 模式流式模拟)"
 
 ---
 
-## 🎉 Tasks 1.1-1.5, 2.1, 2.2 验收结果
+## 🎉 Tasks 1.1-1.5, 2.1-2.4 验收结果
 
 ### 验收测试通过 ✅
-- **单元测试**: 1500+ 行测试代码，所有测试通过
+- **单元测试**: 2100+ 行测试代码，所有测试通过
 - **API 合规性测试**: 符合 Gemini API 官方规范
 - **真实 API 验证**: 
   - 标准模式: `https://generativelanguage.googleapis.com` ✅
   - 完整 URL 模式: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent#` ✅
 - **认证方式修正**: 发现并修正 API key 认证方式（查询参数 vs Authorization 头）
 - **流式模拟验证**: 完整 URL 模式流式模拟功能完全正常工作
+- **错误处理验证**: 指数退避重试、API 密钥刷新、网络错误恢复全部正常
+- **调试监控验证**: 结构化日志、性能指标、错误上下文记录全部正常
 - **零回归验证**: 现有 provider 功能完全不受影响
 
 ### 功能验收 ✅
@@ -564,21 +571,26 @@ Next: Task 2.2 (完整 URL 模式流式模拟)"
 - ✅ **US004**: 流式响应支持和模拟 - 完成 (标准模式 + 完整URL模式)
 - ✅ **US005**: 系统消息和上下文管理 - 完成
 - ✅ **US006**: Token 使用统计 - 完成
+- ✅ **US009**: 错误处理和重试机制 - 完成
+- ✅ **US010**: 调试和监控支持 - 完成
 
 ### 技术指标 ✅
 - **测试覆盖率**: 85%+ (函数级覆盖率 80-100%)
 - **代码质量**: 零 lint 告警，符合项目规范
 - **性能**: 符合项目性能要求
 - **架构**: 完全符合 ProviderClient 接口约束
+- **监控完整性**: 全面的日志记录和性能指标统计
+- **错误恢复**: 健壮的错误处理和自动重试机制
 
 ### 关键发现和修正 🔧
 在验收过程中发现并修正了重要问题：
-- **问题**: 初始实现使用 `Authorization: Bearer` 头认证
-- **发现**: Gemini API 实际使用 `?key=` 查询参数认证
-- **修正**: 更新 `buildRequestURL` 方法和所有相关测试
-- **验证**: 真实 API 调用成功，两种 URL 模式均正常工作
+- **认证问题**: 初始实现使用 `Authorization: Bearer` 头认证 → 修正为 `?key=` 查询参数认证
+- **流式验证**: 修复空 parts 验证问题，支持合法的流式响应格式
+- **Token 字段**: 修正 TokenUsage 字段引用（PromptTokens → InputTokens, CompletionTokens → OutputTokens）
+- **日志格式**: 确保所有日志符合项目 slog 标准和结构化格式要求
+- **测试覆盖**: 补充 Gemini API 响应格式的 role 字段，确保测试准确性
 
-**结论**: Tasks 1.1-1.5, 2.1, 2.2 已全部完成并通过验收，流式功能已全面实现，可以开始后续任务开发。
+**结论**: Tasks 1.1-1.5, 2.1-2.4 已全部完成并通过验收，核心功能、流式功能、错误处理、调试监控全面实现，可以开始扩展功能开发。
 
 ---
 
@@ -751,40 +763,85 @@ Files:
 
 ---
 
-### Task 2.4: 调试和监控集成
+### Task 2.4: 调试和监控集成 ✅ **已完成** (0.5 天)
 **需求编号**: US010  
-**预计时间**: 0.5 天
+**优先级**: P0  
+**完成时间**: 2025-09-22  
+**Git Commit**: `0f152170` - feat: implement comprehensive debugging and monitoring for custom-gemini provider (Task 2.4)
 
-#### 开发任务
-1. **结构化日志集成**
-   - [ ] 添加关键操作的 slog 日志
-   - [ ] 记录请求/响应摘要
-   - [ ] 记录重试和错误信息
-   - [ ] 性能指标记录
+#### 开发任务 ✅ **全部完成**
+1. **结构化日志集成** ✅
+   - [x] ~~添加关键操作的 slog 日志~~ ✅
+   - [x] ~~记录请求/响应摘要~~ ✅
+   - [x] ~~记录重试和错误信息~~ ✅
+   - [x] ~~性能指标记录~~ ✅
 
-2. **调试信息增强**
-   - [ ] HTTP 请求详细日志
-   - [ ] 流式事件追踪
-   - [ ] 错误上下文信息
+2. **调试信息增强** ✅
+   - [x] ~~HTTP 请求详细日志~~ ✅
+   - [x] ~~流式事件追踪~~ ✅
+   - [x] ~~错误上下文信息~~ ✅
 
-#### 测试任务
-- [ ] 日志输出验证测试
-- [ ] 调试模式功能测试
+#### 测试任务 ✅ **全部完成**
+- [x] ~~日志输出验证测试~~ ✅
+- [x] ~~调试模式功能测试~~ ✅
+- [x] ~~性能监控指标测试~~ ✅
+- [x] ~~SSE 流式日志测试~~ ✅
+- [x] ~~基准性能测试~~ ✅
 
-#### 验收任务
-- [ ] 调试日志信息丰富且有用
-- [ ] 遵循项目日志规范
+#### 验收任务 ✅ **全部满足**
+- [x] ~~调试日志信息丰富且有用~~ ✅
+- [x] ~~遵循项目日志规范~~ ✅
+- [x] ~~性能监控完整覆盖~~ ✅
+- [x] ~~错误上下文详尽~~ ✅
 
-#### Git 提交
+#### 实现亮点 ✨
+- **全面日志集成**: 实现了 logOperationContext、logRequestDetails、logResponseDetails 等专用日志方法
+- **流式日志监控**: 创建 processSSEStreamWithLogging 和 countingReader 进行精确的流式数据追踪
+- **性能指标完整**: 记录总时间、连接时间、解析时间、body 大小、token 统计等
+- **安全日志过滤**: 自动过滤敏感信息如 API key 和认证头
+- **生产就绪**: 支持调试级别控制，对生产环境性能影响最小
+- **全面测试覆盖**: 548 行测试代码，覆盖所有日志功能和性能基准测试
+
+#### Git 提交 ✅ **已完成**
 ```bash
-git commit -m "feat: enhance debugging and monitoring capabilities
+# 实际提交记录:
+git commit 0f152170 -m "feat: implement comprehensive debugging and monitoring for custom-gemini provider (Task 2.4)
 
-- Add structured logging for key operations and errors
-- Implement performance metrics and retry tracking
-- Enhance HTTP request/response debugging information
-- Follow project logging conventions and standards
+- Add structured logging integration with slog for all key operations
+- Implement detailed HTTP request/response logging in debug mode  
+- Add performance metrics logging (duration, token counts, body sizes)
+- Create comprehensive error context logging with retry tracking
+- Implement stream-specific logging for both SSE and simulation modes
+- Add helper methods: logOperationContext, logRequestDetails, logResponseDetails
+- Create processSSEStreamWithLogging with detailed event tracking
+- Add countingReader for accurate byte count tracking in streams
+- Implement stream logging wrappers with event counting and timing
+- Create comprehensive test suite (548 lines) covering:
+  * Basic logging integration and structured format validation
+  * Debug mode toggle functionality testing
+  * Error logging with proper context verification
+  * Performance metrics logging validation
+  * SSE stream-specific logging verification
+  * Benchmark tests for logging performance overhead
 
-Addresses: US010"
+Key Features:
+- Operation context logging with provider, model, and timing info
+- HTTP request/response details with security-aware header filtering
+- Stream progress tracking with chunk counts and content metrics
+- Performance monitoring with request/response/parse timing breakdowns
+- Error context preservation with attempt tracking and retry info
+- Memory-efficient stream processing with byte counting
+- Production-ready logging that respects debug level settings
+- Comprehensive test coverage ensuring logging reliability
+
+Addresses: US010 (调试和监控支持)
+Satisfies: AC010.1-AC010.5 (全部验收条件)
+Completes: Task 2.4 - 调试和监控集成
+
+Files:
+- internal/llm/provider/custom_gemini.go (updated with logging integration)
+- internal/llm/provider/custom_gemini_stream.go (updated with stream logging)
+- internal/llm/provider/custom_gemini_logging_test.go (548 lines - comprehensive test suite)"
 ```
 
 ---
